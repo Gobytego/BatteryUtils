@@ -76,7 +76,7 @@ class BatteryCalculatorGUI:
         save_button = ttk.Button(self.input_frame, text="Save Settings", command=self.save_settings)
         save_button.grid(row=11, column=0, columnspan=2, pady=5)
 
-        self.clear_button = ttk.Button(self.input_frame, text="Clear", command=self.clear_fields) # added clear button
+        self.clear_button = ttk.Button(self.input_frame, text="Clear", command=self.clear_fields)
         self.clear_button.grid(row=12, column=0, columnspan=2, pady=5)
 
         # --- Output Labels ---
@@ -84,7 +84,7 @@ class BatteryCalculatorGUI:
         ttk.Label(self.results_frame, text="Estimated Range:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
         self.calculated_range_label = ttk.Label(self.results_frame, text="")
         self.calculated_range_label.grid(row=1, column=1, sticky=tk.E, padx=5, pady=5)
-        self.calculated_range_unit_label = ttk.Label(self.results_frame, text="miles") # Default to miles
+        self.calculated_range_unit_label = ttk.Label(self.results_frame, text="miles")
 
         ttk.Label(self.results_frame, text="Remaining Range:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
         self.remaining_range_label = ttk.Label(self.results_frame, text="")
@@ -108,42 +108,41 @@ class BatteryCalculatorGUI:
         self.miles_per_ah_label = ttk.Label(self.results_frame, text="")
         self.miles_per_ah_label.grid(row=6, column=1, sticky=tk.E, padx=5, pady=5)
 
-        # --- Breakdown Column ---  Moved below Results
-        ttk.Label(self.results_frame, text="--- Breakdown ---").grid(row=7, column=0, columnspan=2, pady=10) # Moved to row 7
-        ttk.Label(self.results_frame, text="Voltage:").grid(row=8, column=0, sticky=tk.W, padx=5) # Moved to row 8
+        # --- Breakdown Column ---
+        ttk.Label(self.results_frame, text="--- Breakdown ---").grid(row=7, column=0, columnspan=2, pady=10)
+        ttk.Label(self.results_frame, text="Voltage:").grid(row=8, column=0, sticky=tk.W, padx=5)
         self.breakdown_voltage_label = ttk.Label(self.results_frame, text="")
-        self.breakdown_voltage_label.grid(row=8, column=1, sticky=tk.E, padx=5)  # Moved to row 8
+        self.breakdown_voltage_label.grid(row=8, column=1, sticky=tk.E, padx=5)
 
-        ttk.Label(self.results_frame, text="Ah:").grid(row=9, column=0, sticky=tk.W, padx=5) # Moved to row 9
+        ttk.Label(self.results_frame, text="Ah:").grid(row=9, column=0, sticky=tk.W, padx=5)
         self.breakdown_ah_label = ttk.Label(self.results_frame, text="")
-        self.breakdown_ah_label.grid(row=9, column=1, sticky=tk.E, padx=5) # Moved to row 9
+        self.breakdown_ah_label.grid(row=9, column=1, sticky=tk.E, padx=5)
 
-        ttk.Label(self.results_frame, text="Wh:").grid(row=10, column=0, sticky=tk.W, padx=5) # Moved to row 10
+        ttk.Label(self.results_frame, text="Wh:").grid(row=10, column=0, sticky=tk.W, padx=5)
         self.breakdown_wh_label = ttk.Label(self.results_frame, text="")
-        self.breakdown_wh_label.grid(row=10, column=1, sticky=tk.E, padx=5) # Moved to row 10
+        self.breakdown_wh_label.grid(row=10, column=1, sticky=tk.E, padx=5)
 
-        ttk.Label(self.results_frame, text="Motor Watts:").grid(row=11, column=0, sticky=tk.W, padx=5) # Moved to row 11
+        ttk.Label(self.results_frame, text="Motor Watts:").grid(row=11, column=0, sticky=tk.W, padx=5)
         self.breakdown_motor_watts_label = ttk.Label(self.results_frame, text="")
-        self.breakdown_motor_watts_label.grid(row=11, column=1, sticky=tk.E, padx=5) # Moved to row 11
+        self.breakdown_motor_watts_label.grid(row=11, column=1, sticky=tk.E, padx=5)
 
-        ttk.Label(self.results_frame, text="Charge Rate:").grid(row=12, column=0, sticky=tk.W, padx=5) # Moved to row 12
+        ttk.Label(self.results_frame, text="Charge Rate:").grid(row=12, column=0, sticky=tk.W, padx=5)
         self.breakdown_charge_rate_label = ttk.Label(self.results_frame, text="")
-        self.breakdown_charge_rate_label.grid(row=12, column=1, sticky=tk.E, padx=5) # Moved to row 12
+        self.breakdown_charge_rate_label.grid(row=12, column=1, sticky=tk.E, padx=5)
 
         # --- Emojis ---
-        emoji_label = ttk.Label(self.results_frame, text="🚲\U0001F50B🛴", font=("Arial", 30)) # Increased font size
+        emoji_label = ttk.Label(self.results_frame, text="🚲🔋🛴", font=("Arial", 30))
         emoji_label.grid(row=13, column=0, columnspan=2, pady=10)
 
         # --- Padding and Weight ---
-        for i in range(14): # Changed from 13 to 14 for the results frame.
+        for i in range(14):
             self.results_frame.grid_rowconfigure(i, weight=1)
         self.results_frame.grid_columnconfigure(1, weight=1)
-        self.input_frame.grid_columnconfigure(1, weight=1)  # Make the input frame's second column resizable
+        self.input_frame.grid_columnconfigure(1, weight=1)
 
-        master.grid_columnconfigure(0, weight=1) # Make the input frame resizable
-        master.grid_columnconfigure(1, weight=1) # Make the results frame resizable
-        master.grid_rowconfigure(0, weight=1)    # Make the row resizable
-
+        master.grid_columnconfigure(0, weight=1)
+        master.grid_columnconfigure(1, weight=1)
+        master.grid_rowconfigure(0, weight=1)
 
     def update_capacity_label(self, event=None):
         selected_type = self.capacity_type_combo.get()
@@ -183,7 +182,6 @@ class BatteryCalculatorGUI:
 
         self.breakdown_motor_watts_label.config(text=motor_wattage)
         self.breakdown_charge_rate_label.config(text=charge_rate)
-
 
     def calculate_range(self):
         try:
@@ -255,7 +253,6 @@ class BatteryCalculatorGUI:
             else:
                 self.miles_per_ah_label.config(text="N/A")
 
-
             # Store full charge range for remaining range calculation
             self.full_charge_range = estimated_range
             self.range_unit = calculated_unit
@@ -266,7 +263,7 @@ class BatteryCalculatorGUI:
             messagebox.showerror("Error", "Voltage cannot be zero.")
         except AttributeError:
             self.full_charge_range = 0
-            self.range_unit = "miles" # Default unit if calculation fails
+            self.range_unit = "miles"
 
     def calculate_charge_time_and_remaining_range(self):
         try:
@@ -282,7 +279,6 @@ class BatteryCalculatorGUI:
             current_percentage = float(self.current_percentage_entry.get())
 
             if voltage <= 0 or capacity_ah <= 0 or charge_rate <= 0 or not 0 <= current_percentage <= 100:
-                # Error messages handled in calculate_range if voltage/capacity are bad
                 if charge_rate <= 0:
                     messagebox.showerror("Error", "Charger rate must be a positive number.")
                 elif not 0 <= current_percentage <= 100:
@@ -298,7 +294,6 @@ class BatteryCalculatorGUI:
 
             self.remaining_charge_percentage_label.config(text=f"{100 - current_percentage:.2f}%")
 
-            # Estimate remaining range based on the percentage
             if hasattr(self, 'full_charge_range'):
                 remaining_range = self.full_charge_range * (current_percentage / 100)
                 self.remaining_range_label.config(text=f"{remaining_range:.2f}")
@@ -368,14 +363,149 @@ class BatteryCalculatorGUI:
         self.breakdown_motor_watts_label.config(text="")
         self.breakdown_charge_rate_label.config(text="")
 
+# --- CLI Functionality ---
+def run_cli_calculator():
+    print("--- Battery Calculator (CLI Mode) ---")
+    
+    # Load settings for default values
+    settings = {}
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, 'r') as f:
+                settings = json.load(f)
+        except Exception as e:
+            print(f"Warning: Failed to load settings for CLI: {e}")
+
+    while True:
+        try:
+            voltage_str = input(f"Enter Battery Voltage (V) [{settings.get('voltage', 'N/A')}]: ") or settings.get('voltage', '')
+            voltage = float(voltage_str)
+            if voltage <= 0:
+                print("Voltage must be a positive number.")
+                continue
+
+            capacity_type = input(f"Enter Capacity Type (Wh/Ah) [{settings.get('capacity_type', 'Wh')}]: ").strip() or settings.get('capacity_type', 'Wh')
+            if capacity_type.lower() not in ["wh", "ah"]:
+                print("Invalid capacity type. Please enter 'Wh' or 'Ah'.")
+                continue
+            
+            capacity_str = input(f"Enter Battery Capacity ({capacity_type}) [{settings.get('capacity', 'N/A')}]: ") or settings.get('capacity', '')
+            capacity = float(capacity_str)
+            if capacity <= 0:
+                print("Capacity must be a positive number.")
+                continue
+
+            charge_rate_str = input(f"Enter Charger Rate (A) [{settings.get('charge_rate', 'N/A')}]: ") or settings.get('charge_rate', '')
+            charge_rate = float(charge_rate_str)
+            if charge_rate <= 0:
+                print("Charger rate must be a positive number.")
+                continue
+
+            current_percentage_str = input("Enter Current Percentage (%) [0]: ") or "0"
+            current_percentage = float(current_percentage_str)
+            if not 0 <= current_percentage <= 100:
+                print("Current percentage must be between 0 and 100.")
+                continue
+
+            motor_wattage_str = input(f"Enter Motor Wattage (W) [{settings.get('motor_wattage', 'N/A')}]: ") or settings.get('motor_wattage', '')
+            motor_wattage = float(motor_wattage_str)
+            if motor_wattage <= 0:
+                print("Motor wattage must be a positive number.")
+                continue
+
+            driving_style = input(f"Enter Driving Style (Agressive/Casual/Eco) [{settings.get('driving_style', 'Casual')}]: ").strip() or settings.get('driving_style', 'Casual')
+            if driving_style.lower() not in ["agressive", "casual", "eco"]:
+                print("Invalid driving style. Please enter 'Agressive', 'Casual', or 'Eco'.")
+                continue
+            
+            # Convert to internal representation for consistency with GUI logic
+            if driving_style.lower() == "agressive":
+                driving_style = "Agressive"
+            elif driving_style.lower() == "casual":
+                driving_style = "Casual"
+            elif driving_style.lower() == "eco":
+                driving_style = "Eco"
+
+            break # Exit loop if all inputs are valid
+
+        except ValueError:
+            print("Invalid input. Please enter numeric values where required.")
+        except KeyboardInterrupt:
+            print("\nExiting CLI calculator.")
+            sys.exit(0)
+
+    # Perform calculations (re-using logic from GUI class for consistency)
+    total_energy_wh = 0
+    total_capacity_ah = 0
+
+    if capacity_type.lower() == "wh":
+        total_energy_wh = capacity
+        try:
+            total_capacity_ah = total_energy_wh / voltage
+        except ZeroDivisionError:
+            total_capacity_ah = 0
+    else:  # capacity_type == "Ah"
+        total_capacity_ah = capacity
+        total_energy_wh = capacity * voltage
+
+    # Adjust power consumption based on driving style percentage
+    power_consumption_w = 0
+    if driving_style == "Agressive":
+        power_consumption_w = motor_wattage * 1.0
+    elif driving_style == "Casual":
+        power_consumption_w = motor_wattage * 0.5
+    elif driving_style == "Eco":
+        power_consumption_w = motor_wattage * 0.25
+
+    estimated_runtime_full_charge = 0
+    if power_consumption_w > 0:
+        estimated_runtime_full_charge = total_energy_wh / power_consumption_w
+    
+    estimated_runtime_full_charge /= 2 # Empirical adjustment
+
+    estimated_range = 0
+    calculated_unit = "miles"
+    if driving_style == "Agressive":
+        estimated_range = estimated_runtime_full_charge * 18.0
+    elif driving_style == "Casual":
+        estimated_range = estimated_runtime_full_charge * 13.5
+    elif driving_style == "Eco":
+        estimated_range = estimated_runtime_full_charge * 9.0
+
+    miles_per_wh = estimated_range / total_energy_wh if total_energy_wh > 0 else 0
+    miles_per_ah = estimated_range / total_capacity_ah if total_capacity_ah > 0 else 0
+
+    remaining_capacity_ah = total_capacity_ah * (1 - (current_percentage / 100))
+    estimated_charge_time = remaining_capacity_ah / charge_rate if charge_rate > 0 else 0
+    remaining_charge_percentage = 100 - current_percentage
+    remaining_range = estimated_range * (current_percentage / 100)
+
+    print("\n--- Results ---")
+    print(f"Estimated Range: {estimated_range:.2f} {calculated_unit}")
+    print(f"Remaining Range: {remaining_range:.2f} {calculated_unit}")
+    print(f"Remaining Charge: {remaining_charge_percentage:.2f}%")
+    print(f"Estimated Charge Time: {estimated_charge_time:.2f} hours")
+    print(f"Miles/Wh: {miles_per_wh:.2f}")
+    print(f"Miles/Ah: {miles_per_ah:.2f}")
+
+    print("\n--- Breakdown ---")
+    print(f"Voltage: {voltage:.2f}V")
+    print(f"Ah: {total_capacity_ah:.2f}Ah")
+    print(f"Wh: {total_energy_wh:.2f}Wh")
+    print(f"Motor Watts: {motor_wattage:.2f}W")
+    print(f"Charge Rate: {charge_rate:.2f}A")
+    print("\n🚲🔋🛴")
+
 if __name__ == "__main__":
-    if 'DISPLAY' not in os.environ:
-        print("Error: No display found. This application requires a graphical environment.")
-        print("If you are using SSH, you may need to enable X11 forwarding.")
-        sys.exit(1)
+    if "--cli" in sys.argv:
+        run_cli_calculator()
+    else:
+        if 'DISPLAY' not in os.environ:
+            print("Error: No display found. This application requires a graphical environment.")
+            print("If you are using SSH, you may need to enable X11 forwarding, or run with the --cli flag.")
+            sys.exit(1)
 
-    root = tk.Tk()
-    app = BatteryCalculatorGUI(root)
-    root.protocol("WM_DELETE_WINDOW", app.update_settings_on_close) # Save settings on window close
-    root.mainloop()
-
+        root = tk.Tk()
+        app = BatteryCalculatorGUI(root)
+        root.protocol("WM_DELETE_WINDOW", app.update_settings_on_close)
+        root.mainloop()
