@@ -7,7 +7,7 @@ a bunch more to come...
 "batteryutils.py" is the code
 "batteryutils" is the standalone binary
 
-<img align="center" width="700" src="https://github.com/Gobytego/BatteryUtils/blob/main/Snapshot_2025-05-21_10-25-56.png">
+<img align="center" width="500" src="https://github.com/Gobytego/BatteryUtils/blob/main/Snapshot_2025-05-21_10-25-56.png">
 
 to run the batteryutils.py in python you will need the following installed:
   tkinter
