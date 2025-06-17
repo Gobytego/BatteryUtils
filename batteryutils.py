@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 import json
 import os
 import sys
@@ -39,75 +39,92 @@ class BatteryCalculatorGUI:
         "Agressive": 80.0   # Scaled up consistently for larger wheels, more power (kept original)
     }
 
+    MAX_PROFILES = 3 # Maximum number of profiles allowed
+
     def __init__(self, master):
         self.master = master
         master.title("Battery Calculator")
 
-        self.load_settings()
+        # Store all profiles loaded from the settings file
+        self.all_profiles = {}
+        # Stores the name of the currently active profile
+        self.current_profile_name = tk.StringVar(value="Default Profile")
 
-        # --- Input Frame ---
+        # --- Main Layout Frames ---
         self.input_frame = ttk.Frame(master)
         self.input_frame.grid(row=0, column=0, padx=10, pady=10, sticky="new")
 
-        # --- Results and Breakdown Frame ---
         self.results_frame = ttk.Frame(master)
         self.results_frame.grid(row=0, column=1, padx=10, pady=10, sticky="new")
 
+        # --- Profile Management Section ---
+        self.profile_frame = ttk.LabelFrame(self.input_frame, text="--- Profile Management ---")
+        self.profile_frame.grid(row=0, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
+
+        ttk.Label(self.profile_frame, text="Select Profile:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        self.profile_combo = ttk.Combobox(self.profile_frame, textvariable=self.current_profile_name, width=20, state="readonly")
+        self.profile_combo.grid(row=0, column=1, sticky="ew", padx=5, pady=5)
+        self.profile_combo.bind("<<ComboboxSelected>>", self.on_profile_selection)
+        
+        self.load_all_profiles() # Load all profiles from file initially
+        # Initialize profile combo with current profiles (moved after self.profile_combo creation)
+        self.update_profile_combo()
+
+        self.profile_buttons_frame = ttk.Frame(self.profile_frame)
+        self.profile_buttons_frame.grid(row=1, column=0, columnspan=2, pady=5)
+
+        ttk.Button(self.profile_buttons_frame, text="New", command=self.create_new_profile).pack(side=tk.LEFT, padx=2)
+        ttk.Button(self.profile_buttons_frame, text="Save", command=self.save_current_profile).pack(side=tk.LEFT, padx=2)
+        ttk.Button(self.profile_buttons_frame, text="Load", command=lambda: self.load_profile_data(self.current_profile_name.get())).pack(side=tk.LEFT, padx=2)
+        ttk.Button(self.profile_buttons_frame, text="Delete", command=self.delete_selected_profile).pack(side=tk.LEFT, padx=2)
+
         # --- Battery Information ---
-        ttk.Label(self.input_frame, text="--- Battery Info ---").grid(row=0, column=0, columnspan=2, pady=5)
-        ttk.Label(self.input_frame, text="Nominal Voltage (V):").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(self.input_frame, text="--- Battery Info ---").grid(row=1, column=0, columnspan=2, pady=5) # Row shifted
+        ttk.Label(self.input_frame, text="Nominal Voltage (V):").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5) # Row shifted
         self.voltage_entry = ttk.Entry(self.input_frame, width=15)
-        self.voltage_entry.grid(row=1, column=1, sticky=tk.E, padx=5, pady=5)
+        self.voltage_entry.grid(row=2, column=1, sticky=tk.E, padx=5, pady=5)
         self.voltage_entry.bind("<FocusOut>", self.update_voltage_info_labels)
-        self.voltage_entry.bind("<KeyRelease>", self.update_voltage_info_labels) # Update as user types
-        if self.settings.get("voltage"):
-            self.voltage_entry.insert(0, self.settings["voltage"])
+        self.voltage_entry.bind("<KeyRelease>", self.update_voltage_info_labels) 
 
         # Cells in Series (S) - initially hidden, shown if nominal voltage is unknown
         self.series_cells_label = ttk.Label(self.input_frame, text="Cells in Series (S):")
         self.series_cells_entry = ttk.Entry(self.input_frame, width=15)
         self.series_cells_entry.bind("<FocusOut>", self.update_voltage_info_labels)
         self.series_cells_entry.bind("<KeyRelease>", self.update_voltage_info_labels)
-        if self.settings.get("series_cells"): # Load if previously saved
-            self.series_cells_entry.insert(0, self.settings["series_cells"])
 
         # Info labels for min/max voltage based on series cells
         self.max_voltage_info_label = ttk.Label(self.input_frame, text="Full Charge V: N/A")
-        self.max_voltage_info_label.grid(row=3, column=0, sticky=tk.W, padx=5, pady=2)
+        self.max_voltage_info_label.grid(row=4, column=0, sticky=tk.W, padx=5, pady=2) # Row shifted
         self.min_voltage_info_label = ttk.Label(self.input_frame, text="Empty V: N/A")
-        self.min_voltage_info_label.grid(row=4, column=0, sticky=tk.W, padx=5, pady=2)
+        self.min_voltage_info_label.grid(row=5, column=0, sticky=tk.W, padx=5, pady=2) # Row shifted
         
         # Initial call to set visibility and labels
         self.update_voltage_info_labels()
 
-        ttk.Label(self.input_frame, text="Capacity Type:").grid(row=5, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(self.input_frame, text="Capacity Type:").grid(row=6, column=0, sticky=tk.W, padx=5, pady=5) # Row shifted
         self.capacity_type_combo = ttk.Combobox(self.input_frame, values=["Wh", "Ah"], width=13)
-        self.capacity_type_combo.grid(row=5, column=1, sticky=tk.E, padx=5, pady=5)
-        self.capacity_type_combo.set(self.settings.get("capacity_type", "Wh"))
+        self.capacity_type_combo.grid(row=6, column=1, sticky=tk.E, padx=5, pady=5) # Row shifted
+        self.capacity_type_combo.set("Wh") # Default for new profiles
         self.capacity_type_combo.bind("<<ComboboxSelected>>", self.update_capacity_label)
 
         self.capacity_label_text = tk.StringVar()
-        ttk.Label(self.input_frame, textvariable=self.capacity_label_text).grid(row=6, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(self.input_frame, textvariable=self.capacity_label_text).grid(row=7, column=0, sticky=tk.W, padx=5, pady=5) # Row shifted
         self.capacity_entry = ttk.Entry(self.input_frame, width=15)
-        self.capacity_entry.grid(row=6, column=1, sticky=tk.E, padx=5, pady=5)
-        if self.settings.get("capacity"):
-            self.capacity_entry.insert(0, self.settings["capacity"])
+        self.capacity_entry.grid(row=7, column=1, sticky=tk.E, padx=5, pady=5) # Row shifted
         self.update_capacity_label()
 
 
         # --- Charging Information ---
-        ttk.Label(self.input_frame, text="--- Charging ---").grid(row=7, column=0, columnspan=2, pady=5)
-        ttk.Label(self.input_frame, text="Charger Rate (A):").grid(row=8, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(self.input_frame, text="--- Charging ---").grid(row=8, column=0, columnspan=2, pady=5) # Row shifted
+        ttk.Label(self.input_frame, text="Charger Rate (A):").grid(row=9, column=0, sticky=tk.W, padx=5, pady=5) # Row shifted
         self.charge_rate_entry = ttk.Entry(self.input_frame, width=15)
-        self.charge_rate_entry.grid(row=8, column=1, sticky=tk.E, padx=5, pady=5)
-        if self.settings.get("charge_rate"):
-            self.charge_rate_entry.insert(0, self.settings["charge_rate"])
+        self.charge_rate_entry.grid(row=9, column=1, sticky=tk.E, padx=5, pady=5) # Row shifted
 
         # --- Current Battery State Input Choice ---
-        self.charge_input_method = tk.StringVar(value=self.settings.get("charge_input_method", "percentage"))
+        self.charge_input_method = tk.StringVar(value="percentage") # Default for new profiles
 
         self.radio_frame = ttk.Frame(self.input_frame)
-        self.radio_frame.grid(row=9, column=0, columnspan=2, pady=5)
+        self.radio_frame.grid(row=10, column=0, columnspan=2, pady=5) # Row shifted
 
         self.percent_radio = ttk.Radiobutton(self.radio_frame, text="Current Percentage (%)", variable=self.charge_input_method, value="percentage", command=self.toggle_charge_input)
         self.percent_radio.pack(side=tk.LEFT, padx=5)
@@ -116,47 +133,41 @@ class BatteryCalculatorGUI:
         self.voltage_radio.pack(side=tk.LEFT, padx=5)
 
         self.current_percentage_label = ttk.Label(self.input_frame, text="Current Percentage (%):")
-        self.current_percentage_label.grid(row=10, column=0, sticky=tk.W, padx=5, pady=5)
+        self.current_percentage_label.grid(row=11, column=0, sticky=tk.W, padx=5, pady=5) # Row shifted
         self.current_percentage_entry = ttk.Entry(self.input_frame, width=15)
-        self.current_percentage_entry.grid(row=10, column=1, sticky=tk.E, padx=5, pady=5)
-        self.current_percentage_entry.insert(0, self.settings.get("current_percentage", "0"))
+        self.current_percentage_entry.grid(row=11, column=1, sticky=tk.E, padx=5, pady=5) # Row shifted
+        self.current_percentage_entry.insert(0, "0")
 
         self.current_voltage_label = ttk.Label(self.input_frame, text="Current Voltage (V):")
         self.current_voltage_entry = ttk.Entry(self.input_frame, width=15)
-        self.current_voltage_entry.insert(0, self.settings.get("current_voltage", ""))
+        self.current_voltage_entry.insert(0, "")
 
-        self.toggle_charge_input() # Call to set initial state based on loaded settings
+        self.toggle_charge_input() # Call to set initial state based on default/loaded profile
 
         # --- Motor and Bike Information ---
-        ttk.Label(self.input_frame, text="--- Motor/Bike Info ---").grid(row=11, column=0, columnspan=2, pady=5)
-        ttk.Label(self.input_frame, text="Motor Wattage (W):").grid(row=12, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(self.input_frame, text="--- Motor/Bike Info ---").grid(row=12, column=0, columnspan=2, pady=5) # Row shifted
+        ttk.Label(self.input_frame, text="Motor Wattage (W):").grid(row=13, column=0, sticky=tk.W, padx=5, pady=5) # Row shifted
         self.motor_wattage_entry = ttk.Entry(self.input_frame, width=15)
-        self.motor_wattage_entry.grid(row=12, column=1, sticky=tk.E, padx=5, pady=5)
-        if self.settings.get("motor_wattage"):
-            self.motor_wattage_entry.insert(0, self.settings["motor_wattage"])
+        self.motor_wattage_entry.grid(row=13, column=1, sticky=tk.E, padx=5, pady=5) # Row shifted
 
-        ttk.Label(self.input_frame, text="Wheel Diameter (in):").grid(row=13, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(self.input_frame, text="Wheel Diameter (in):").grid(row=14, column=0, sticky=tk.W, padx=5, pady=5) # Row shifted
         self.wheel_diameter_entry = ttk.Entry(self.input_frame, width=15)
-        self.wheel_diameter_entry.grid(row=13, column=1, sticky=tk.E, padx=5, pady=5)
-        if self.settings.get("wheel_diameter"):
-            self.wheel_diameter_entry.insert(0, self.settings["wheel_diameter"])
+        self.wheel_diameter_entry.grid(row=14, column=1, sticky=tk.E, padx=5, pady=5) # Row shifted
 
-        ttk.Label(self.input_frame, text="Driving Style:").grid(row=14, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(self.input_frame, text="Driving Style:").grid(row=15, column=0, sticky=tk.W, padx=5, pady=5) # Row shifted
         self.driving_style_combo = ttk.Combobox(self.input_frame, values=["Agressive", "Casual", "Eco"], width=13)
-        self.driving_style_combo.grid(row=14, column=1, sticky=tk.E, padx=5, pady=5)
-        self.driving_style_combo.set(self.settings.get("driving_style", "Casual"))
+        self.driving_style_combo.grid(row=15, column=1, sticky=tk.E, padx=5, pady=5) # Row shifted
+        self.driving_style_combo.set("Casual") # Default for new profiles
 
         # --- Buttons ---
         calculate_button = ttk.Button(self.input_frame, text="Calculate", command=self.calculate_all)
-        calculate_button.grid(row=15, column=0, columnspan=2, pady=10)
+        calculate_button.grid(row=16, column=0, columnspan=2, pady=10) # Row shifted
 
-        save_button = ttk.Button(self.input_frame, text="Save Settings", command=self.save_settings)
-        save_button.grid(row=16, column=0, columnspan=2, pady=5)
+        # Clear button now only clears fields, not profile.
+        self.clear_button = ttk.Button(self.input_frame, text="Clear Fields", command=self.clear_fields)
+        self.clear_button.grid(row=17, column=0, columnspan=2, pady=5) # Row shifted
 
-        self.clear_button = ttk.Button(self.input_frame, text="Clear", command=self.clear_fields)
-        self.clear_button.grid(row=17, column=0, columnspan=2, pady=5)
-
-        # --- Output Labels ---
+        # --- Output Labels (Results and Breakdown) ---
         ttk.Label(self.results_frame, text="--- Results ---").grid(row=0, column=0, columnspan=2, pady=10)
         ttk.Label(self.results_frame, text="Estimated Range:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
         self.calculated_range_label = ttk.Label(self.results_frame, text="")
@@ -246,6 +257,187 @@ class BatteryCalculatorGUI:
         master.grid_columnconfigure(1, weight=1)
         master.grid_rowconfigure(0, weight=1)
 
+        # Load data for the initial profile (either last active or default)
+        self.load_profile_data(self.current_profile_name.get())
+
+
+    def load_all_profiles(self):
+        """Loads all profiles from the settings file."""
+        if os.path.exists(SETTINGS_FILE):
+            try:
+                with open(SETTINGS_FILE, 'r') as f:
+                    data = json.load(f)
+                    self.all_profiles = data.get("profiles", {})
+                    # Set the last active profile if available, otherwise default
+                    last_active = data.get("last_active_profile")
+                    if last_active and last_active in self.all_profiles:
+                        self.current_profile_name.set(last_active)
+                    elif self.all_profiles: # If there are profiles but no last_active, pick the first one
+                        self.current_profile_name.set(list(self.all_profiles.keys())[0])
+                    else: # No profiles at all, create a default one
+                        self.all_profiles["Default Profile"] = self._get_default_profile_settings()
+                        self.current_profile_name.set("Default Profile")
+
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to load settings: {e}\nCreating a new default profile.")
+                self.all_profiles = {"Default Profile": self._get_default_profile_settings()}
+                self.current_profile_name.set("Default Profile")
+        else:
+            self.all_profiles = {"Default Profile": self._get_default_profile_settings()}
+            self.current_profile_name.set("Default Profile")
+        
+        # self.update_profile_combo() # This call was moved to after self.profile_combo creation
+
+
+    def _get_default_profile_settings(self):
+        """Returns a dictionary with default settings for a new profile."""
+        return {
+            "voltage": "",
+            "series_cells": "",
+            "capacity_type": "Wh",
+            "capacity": "",
+            "charge_rate": "",
+            "current_percentage": "0",
+            "current_voltage": "",
+            "charge_input_method": "percentage",
+            "motor_wattage": "",
+            "wheel_diameter": "",
+            "driving_style": "Casual"
+        }
+
+    def update_profile_combo(self):
+        """Updates the profile selection combobox with current profile names."""
+        self.profile_combo['values'] = list(self.all_profiles.keys())
+        # Ensure the currently selected value is still in the list, or default
+        if self.current_profile_name.get() not in self.all_profiles:
+            if self.all_profiles:
+                self.current_profile_name.set(list(self.all_profiles.keys())[0])
+            else:
+                self.current_profile_name.set("Default Profile") # Should not happen if a default is always created
+        self.profile_combo.set(self.current_profile_name.get()) # Refresh display
+
+
+    def load_profile_data(self, profile_name):
+        """Loads the settings for the given profile name into the GUI fields."""
+        if profile_name not in self.all_profiles:
+            messagebox.showerror("Error", f"Profile '{profile_name}' not found.")
+            return
+
+        settings = self.all_profiles[profile_name]
+        self.clear_fields(keep_profile_name=True) # Clear current display but keep profile name
+
+        # Populate fields from the loaded settings
+        self.voltage_entry.insert(0, settings.get("voltage", ""))
+        self.series_cells_entry.insert(0, settings.get("series_cells", ""))
+        self.capacity_type_combo.set(settings.get("capacity_type", "Wh"))
+        self.capacity_entry.insert(0, settings.get("capacity", ""))
+        self.charge_rate_entry.insert(0, settings.get("charge_rate", ""))
+        self.current_percentage_entry.insert(0, settings.get("current_percentage", "0"))
+        self.current_voltage_entry.insert(0, settings.get("current_voltage", ""))
+        self.motor_wattage_entry.insert(0, settings.get("motor_wattage", ""))
+        self.wheel_diameter_entry.insert(0, settings.get("wheel_diameter", ""))
+        self.driving_style_combo.set(settings.get("driving_style", "Casual"))
+        self.charge_input_method.set(settings.get("charge_input_method", "percentage"))
+
+        self.update_capacity_label() # Ensure correct label for capacity
+        self.toggle_charge_input() # Ensure correct visibility of charge input fields
+        self.update_voltage_info_labels() # Ensure correct visibility/info for series cells/voltage
+
+
+    def on_profile_selection(self, event):
+        """Callback when a new profile is selected from the combobox."""
+        selected_profile = self.current_profile_name.get()
+        if selected_profile:
+            self.load_profile_data(selected_profile)
+
+
+    def save_current_profile(self):
+        """Saves the current GUI field values into the active profile."""
+        profile_name = self.current_profile_name.get()
+        current_settings = {
+            "voltage": self.voltage_entry.get(),
+            "series_cells": self.series_cells_entry.get() if self.series_cells_entry.winfo_ismapped() else "", # Only save if visible
+            "capacity_type": self.capacity_type_combo.get(),
+            "capacity": self.capacity_entry.get(),
+            "charge_rate": self.charge_rate_entry.get(),
+            "current_percentage": self.current_percentage_entry.get(),
+            "current_voltage": self.current_voltage_entry.get(),
+            "charge_input_method": self.charge_input_method.get(),
+            "motor_wattage": self.motor_wattage_entry.get(),
+            "wheel_diameter": self.wheel_diameter_entry.get(),
+            "driving_style": self.driving_style_combo.get(),
+        }
+        self.all_profiles[profile_name] = current_settings
+        self._save_all_profiles_to_file(profile_name)
+        messagebox.showinfo("Success", f"Profile '{profile_name}' saved successfully!")
+
+    def _save_all_profiles_to_file(self, last_active_profile_name):
+        """Saves the entire self.all_profiles dictionary to the settings file."""
+        try:
+            data_to_save = {
+                "profiles": self.all_profiles,
+                "last_active_profile": last_active_profile_name
+            }
+            with open(SETTINGS_FILE, 'w') as f:
+                json.dump(data_to_save, f, indent=4)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save all profiles: {e}")
+
+
+    def create_new_profile(self):
+        """Prompts for a new profile name and creates it."""
+        if len(self.all_profiles) >= self.MAX_PROFILES:
+            messagebox.showwarning("Profile Limit", f"You can only have up to {self.MAX_PROFILES} profiles.")
+            return
+
+        new_name = simpledialog.askstring("New Profile", "Enter a name for the new profile:")
+        if new_name:
+            new_name = new_name.strip()
+            if not new_name:
+                messagebox.showerror("Invalid Name", "Profile name cannot be empty.")
+                return
+            if new_name in self.all_profiles:
+                messagebox.showerror("Duplicate Name", f"Profile '{new_name}' already exists. Please choose a different name.")
+                return
+
+            self.all_profiles[new_name] = self._get_default_profile_settings()
+            self.current_profile_name.set(new_name)
+            self.update_profile_combo()
+            self.load_profile_data(new_name) # Load the (empty) new profile data
+            self.save_current_profile() # Immediately save the new (empty) profile
+            messagebox.showinfo("New Profile", f"Profile '{new_name}' created.")
+
+
+    def delete_selected_profile(self):
+        """Deletes the currently selected profile."""
+        profile_to_delete = self.current_profile_name.get()
+        if profile_to_delete == "Default Profile" and len(self.all_profiles) == 1:
+            messagebox.showwarning("Cannot Delete", "The 'Default Profile' cannot be deleted if it's the only profile.")
+            return
+        if profile_to_delete not in self.all_profiles:
+            messagebox.showerror("Error", "No profile selected or profile not found for deletion.")
+            return
+
+        if messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete profile '{profile_to_delete}'? This cannot be undone."):
+            del self.all_profiles[profile_to_delete]
+            self.update_profile_combo() # Remove from combobox
+            self._save_all_profiles_to_file(self.current_profile_name.get()) # Save changes
+
+            # If the deleted profile was the active one, switch to another or default
+            if profile_to_delete == self.current_profile_name.get():
+                if self.all_profiles:
+                    first_profile = list(self.all_profiles.keys())[0]
+                    self.current_profile_name.set(first_profile)
+                    self.load_profile_data(first_profile)
+                else:
+                    # Should not happen if "Default Profile" is always kept
+                    self.all_profiles["Default Profile"] = self._get_default_profile_settings()
+                    self.current_profile_name.set("Default Profile")
+                    self.load_profile_data("Default Profile")
+            
+            messagebox.showinfo("Deleted", f"Profile '{profile_to_delete}' deleted.")
+
+
     def update_voltage_info_labels(self, event=None):
         nominal_voltage_str = self.voltage_entry.get()
         inferred_s = None
@@ -264,8 +456,8 @@ class BatteryCalculatorGUI:
                 self.series_cells_entry.insert(0, str(inferred_s))
             else:
                 # If nominal voltage not found in map, show the series cells input
-                self.series_cells_label.grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
-                self.series_cells_entry.grid(row=2, column=1, sticky=tk.E, padx=5, pady=5)
+                self.series_cells_label.grid(row=3, column=0, sticky=tk.W, padx=5, pady=5) # Row shifted
+                self.series_cells_entry.grid(row=3, column=1, sticky=tk.E, padx=5, pady=5) # Row shifted
                 self.min_voltage_info_label.config(text="Empty V: N/A")
                 self.max_voltage_info_label.config(text="Full Charge V: N/A")
                 return # Exit early, as we need S from manual input now
@@ -273,8 +465,8 @@ class BatteryCalculatorGUI:
         except ValueError:
             # Handle cases where nominal voltage input is not a valid number
             inferred_s = None
-            self.series_cells_label.grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
-            self.series_cells_entry.grid(row=2, column=1, sticky=tk.E, padx=5, pady=5)
+            self.series_cells_label.grid(row=3, column=0, sticky=tk.W, padx=5, pady=5) # Row shifted
+            self.series_cells_entry.grid(row=3, column=1, sticky=tk.E, padx=5, pady=5) # Row shifted
             self.min_voltage_info_label.config(text="Empty V: N/A")
             self.max_voltage_info_label.config(text="Full Charge V: N/A")
             return # Exit early, as we need S from manual input now
@@ -300,15 +492,15 @@ class BatteryCalculatorGUI:
     def toggle_charge_input(self):
         selected_method = self.charge_input_method.get()
         if selected_method == "percentage":
-            self.current_percentage_label.grid(row=10, column=0, sticky=tk.W, padx=5, pady=5)
-            self.current_percentage_entry.grid(row=10, column=1, sticky=tk.E, padx=5, pady=5)
+            self.current_percentage_label.grid(row=11, column=0, sticky=tk.W, padx=5, pady=5) # Row shifted
+            self.current_percentage_entry.grid(row=11, column=1, sticky=tk.E, padx=5, pady=5) # Row shifted
             self.current_voltage_label.grid_forget()
             self.current_voltage_entry.grid_forget()
         else: # selected_method == "voltage"
             self.current_percentage_label.grid_forget()
             self.current_percentage_entry.grid_forget()
-            self.current_voltage_label.grid(row=10, column=0, sticky=tk.W, padx=5, pady=5)
-            self.current_voltage_entry.grid(row=10, column=1, sticky=tk.E, padx=5, pady=5)
+            self.current_voltage_label.grid(row=11, column=0, sticky=tk.W, padx=5, pady=5) # Row shifted
+            self.current_voltage_entry.grid(row=11, column=1, sticky=tk.E, padx=5, pady=5) # Row shifted
 
     def update_capacity_label(self, event=None):
         selected_type = self.capacity_type_combo.get()
@@ -567,70 +759,35 @@ class BatteryCalculatorGUI:
             self.remaining_charge_percentage_label.config(text="N/A")
             self.remaining_range_label.config(text="N/A")
 
-    def save_settings(self):
-        try:
-            voltage = self.voltage_entry.get()
-            # Only save series_cells if it's currently visible/populated (meaning it was manually entered or inferred)
-            series_cells = self.series_cells_entry.get() if self.series_cells_entry.winfo_ismapped() else ""
-            capacity_type = self.capacity_type_combo.get()
-            capacity = self.capacity_entry.get()
-            motor_wattage = self.motor_wattage_entry.get()
-            wheel_diameter = self.wheel_diameter_entry.get() # Save new field
-            driving_style = self.driving_style_combo.get()
-            charge_rate = self.charge_rate_entry.get()
-            current_percentage = self.current_percentage_entry.get()
-            current_voltage = self.current_voltage_entry.get()
-            charge_input_method = self.charge_input_method.get()
-
-
-            settings = {
-                "voltage": voltage,
-                "series_cells": series_cells,
-                "capacity_type": capacity_type,
-                "capacity": capacity,
-                "motor_wattage": motor_wattage,
-                "wheel_diameter": wheel_diameter, # Add to settings
-                "driving_style": driving_style,
-                "charge_rate": charge_rate,
-                "current_percentage": current_percentage,
-                "current_voltage": current_voltage,
-                "charge_input_method": charge_input_method,
-            }
-
-            with open(SETTINGS_FILE, 'w') as f:
-                json.dump(settings, f)
-            messagebox.showinfo("Success", "Settings saved successfully!")
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to save settings: {e}")
-
-    def load_settings(self):
-        self.settings = {}
-        if os.path.exists(SETTINGS_FILE):
-            try:
-                with open(SETTINGS_FILE, 'r') as f:
-                    self.settings = json.load(f)
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to load settings: {e}")
-
     def update_settings_on_close(self):
-        self.save_settings()
+        # Save the current profile before closing
+        self.save_current_profile() 
         self.master.destroy()
 
-    def clear_fields(self):
+    def clear_fields(self, keep_profile_name=False):
+        """Clears all input fields, and output labels.
+           If keep_profile_name is True, the profile selection is not reset."""
+        # Clear input entries
         self.voltage_entry.delete(0, tk.END)
-        self.series_cells_entry.delete(0, tk.END) # Clear new field content
-        self.capacity_type_combo.set("Wh")
+        self.series_cells_entry.delete(0, tk.END) 
         self.capacity_entry.delete(0, tk.END)
         self.charge_rate_entry.delete(0, tk.END)
         self.current_percentage_entry.delete(0, tk.END)
         self.current_voltage_entry.delete(0, tk.END)
         self.motor_wattage_entry.delete(0, tk.END)
-        self.wheel_diameter_entry.delete(0, tk.END) # Clear new field
+        self.wheel_diameter_entry.delete(0, tk.END) 
+        
+        # Reset comboboxes and radiobuttons to default values
+        self.capacity_type_combo.set("Wh")
         self.driving_style_combo.set("Casual")
-        self.charge_input_method.set("percentage") # Reset to default
-        self.toggle_charge_input() # Update visibility
-        self.update_voltage_info_labels() # Re-evaluate and potentially hide series_cells_entry
+        self.charge_input_method.set("percentage") 
+        
+        # Update visibility and info labels based on cleared/default states
+        self.toggle_charge_input() 
+        self.update_capacity_label()
+        self.update_voltage_info_labels()
 
+        # Clear output labels
         self.calculated_range_label.config(text="")
         self.remaining_range_label.config(text="")
         self.remaining_charge_percentage_label.config(text="")
@@ -638,18 +795,18 @@ class BatteryCalculatorGUI:
         self.miles_per_wh_label.config(text="")
         self.miles_per_ah_label.config(text="")
         self.breakdown_voltage_label.config(text="")
-        self.breakdown_series_cells_label.config(text="") # New breakdown label
+        self.breakdown_series_cells_label.config(text="") 
         self.breakdown_min_max_voltage_label.config(text="")
         self.breakdown_ah_label.config(text="")
         self.breakdown_wh_label.config(text="")
         self.breakdown_motor_watts_label.config(text="")
-        self.breakdown_wheel_diameter_label.config(text="") # New breakdown label
+        self.breakdown_wheel_diameter_label.config(text="") 
         self.breakdown_charge_rate_label.config(text="")
         self.breakdown_current_state_percent_label.config(text="")
         self.breakdown_current_state_voltage_label.config(text="")
 
 
-# --- CLI Functionality ---
+# --- CLI Functionality (Remains single-profile for simplicity) ---
 def get_cli_input(prompt, default_value=None, type_cast=str, validation_func=None, error_message="Invalid input.", default_text_if_none="N/A"):
     while True:
         try:
@@ -707,24 +864,62 @@ def run_cli_calculator():
         "Agressive": 80.0   # Kept original
     }
 
-    # Load settings for default values
+    # Load settings for default values (CLI still uses the single-profile saving mechanism for simplicity)
     settings = {}
     if os.path.exists(SETTINGS_FILE):
         try:
             with open(SETTINGS_FILE, 'r') as f:
-                settings = json.load(f)
+                # CLI only cares about the 'Default Profile' or the last active profile data
+                # For simplicity in CLI, we'll extract the 'Default Profile' if it exists,
+                # otherwise it will behave like the original single-profile CLI.
+                loaded_data = json.load(f)
+                profiles_data = loaded_data.get("profiles", {})
+                last_active_profile_name = loaded_data.get("last_active_profile")
+
+                if last_active_profile_name and last_active_profile_name in profiles_data:
+                    settings = profiles_data.get(last_active_profile_name, {})
+                elif "Default Profile" in profiles_data:
+                    settings = profiles_data.get("Default Profile", {})
+                else: # No profiles or no default/last active, use empty settings
+                    settings = {}
         except Exception as e:
-            print(f"Warning: Failed to load settings for CLI: {e}")
+            print(f"Warning: Failed to load CLI settings: {e}")
 
     # Use settings for default values, converting to correct types if necessary
-    default_voltage = settings.get('voltage')
-    default_series_cells = settings.get('series_cells') # New default
-    default_capacity = settings.get('capacity')
-    default_charge_rate = settings.get('charge_rate')
-    default_motor_wattage = settings.get('motor_wattage')
-    default_wheel_diameter = settings.get('wheel_diameter') # New default
+    # Provide sensible defaults if settings are not found
+    default_voltage = settings.get('voltage', '')
+    # Ensure default_voltage is convertable if not empty
+    try: default_voltage = float(default_voltage) if default_voltage else None
+    except ValueError: default_voltage = None
+
+    default_series_cells = settings.get('series_cells', '')
+    try: default_series_cells = int(default_series_cells) if default_series_cells else None
+    except ValueError: default_series_cells = None
+
+    default_capacity = settings.get('capacity', '')
+    try: default_capacity = float(default_capacity) if default_capacity else None
+    except ValueError: default_capacity = None
+
+    default_charge_rate = settings.get('charge_rate', '')
+    try: default_charge_rate = float(default_charge_rate) if default_charge_rate else None
+    except ValueError: default_charge_rate = None
+
+    default_motor_wattage = settings.get('motor_wattage', '')
+    try: default_motor_wattage = float(default_motor_wattage) if default_motor_wattage else None
+    except ValueError: default_motor_wattage = None
+
+    default_wheel_diameter = settings.get('wheel_diameter', '')
+    try: default_wheel_diameter = float(default_wheel_diameter) if default_wheel_diameter else None
+    except ValueError: default_wheel_diameter = None
+
     default_current_percentage = settings.get('current_percentage', "0")
-    default_current_voltage = settings.get('current_voltage')
+    try: default_current_percentage = float(default_current_percentage) if default_current_percentage else 0.0 # Default to 0.0 if cannot convert
+    except ValueError: default_current_percentage = 0.0
+
+    default_current_voltage = settings.get('current_voltage', '')
+    try: default_current_voltage = float(default_current_voltage) if default_current_voltage else None
+    except ValueError: default_current_voltage = None
+
     default_capacity_type = settings.get('capacity_type', 'Wh')
     default_driving_style = settings.get('driving_style', 'Casual')
     default_charge_input_method = settings.get('charge_input_method', 'percentage')
