@@ -22,6 +22,23 @@ class BatteryCalculatorGUI:
         # Add more mappings as needed
     }
 
+    # Reference Wheel Sizes for Wh/mile interpolation
+    SMALL_WHEEL_REF = 10.0  # inches, e.g., for scooters, highly efficient base
+    LARGE_WHEEL_REF = 27.5  # inches, user's large wheel size, represents larger e-bikes/motorcycles
+
+    # Average Wh/mile efficiency based on driving style FOR SMALL AND LARGE WHEELS
+    # These values are recalibrated based on the user's provided examples.
+    SMALL_WHEEL_EFFICIENCY = {
+        "Eco": 33.28,       # Updated from Bike 1 (48V*10.4Ah / 15 miles = 33.28 Wh/mile)
+        "Casual": 30.0,     # Moderate efficiency for small vehicles (kept original as no new data provided)
+        "Agressive": 45.0   # Less efficient for small vehicles (kept original as no new data provided)
+    }
+    LARGE_WHEEL_EFFICIENCY = {
+        "Eco": 41.6,        # Updated from Bike 2 (52V*20Ah / 25 miles = 41.6 Wh/mile)
+        "Casual": 65.0,     # Scaled up consistently for larger wheels, more power (kept original)
+        "Agressive": 80.0   # Scaled up consistently for larger wheels, more power (kept original)
+    }
+
     def __init__(self, master):
         self.master = master
         master.title("Battery Calculator")
@@ -110,28 +127,34 @@ class BatteryCalculatorGUI:
 
         self.toggle_charge_input() # Call to set initial state based on loaded settings
 
-        # --- Motor Information ---
-        ttk.Label(self.input_frame, text="--- Motor Info ---").grid(row=11, column=0, columnspan=2, pady=5)
+        # --- Motor and Bike Information ---
+        ttk.Label(self.input_frame, text="--- Motor/Bike Info ---").grid(row=11, column=0, columnspan=2, pady=5)
         ttk.Label(self.input_frame, text="Motor Wattage (W):").grid(row=12, column=0, sticky=tk.W, padx=5, pady=5)
         self.motor_wattage_entry = ttk.Entry(self.input_frame, width=15)
         self.motor_wattage_entry.grid(row=12, column=1, sticky=tk.E, padx=5, pady=5)
         if self.settings.get("motor_wattage"):
             self.motor_wattage_entry.insert(0, self.settings["motor_wattage"])
 
-        ttk.Label(self.input_frame, text="Driving Style:").grid(row=13, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(self.input_frame, text="Wheel Diameter (in):").grid(row=13, column=0, sticky=tk.W, padx=5, pady=5)
+        self.wheel_diameter_entry = ttk.Entry(self.input_frame, width=15)
+        self.wheel_diameter_entry.grid(row=13, column=1, sticky=tk.E, padx=5, pady=5)
+        if self.settings.get("wheel_diameter"):
+            self.wheel_diameter_entry.insert(0, self.settings["wheel_diameter"])
+
+        ttk.Label(self.input_frame, text="Driving Style:").grid(row=14, column=0, sticky=tk.W, padx=5, pady=5)
         self.driving_style_combo = ttk.Combobox(self.input_frame, values=["Agressive", "Casual", "Eco"], width=13)
-        self.driving_style_combo.grid(row=13, column=1, sticky=tk.E, padx=5, pady=5)
+        self.driving_style_combo.grid(row=14, column=1, sticky=tk.E, padx=5, pady=5)
         self.driving_style_combo.set(self.settings.get("driving_style", "Casual"))
 
         # --- Buttons ---
         calculate_button = ttk.Button(self.input_frame, text="Calculate", command=self.calculate_all)
-        calculate_button.grid(row=14, column=0, columnspan=2, pady=10)
+        calculate_button.grid(row=15, column=0, columnspan=2, pady=10)
 
         save_button = ttk.Button(self.input_frame, text="Save Settings", command=self.save_settings)
-        save_button.grid(row=15, column=0, columnspan=2, pady=5)
+        save_button.grid(row=16, column=0, columnspan=2, pady=5)
 
         self.clear_button = ttk.Button(self.input_frame, text="Clear", command=self.clear_fields)
-        self.clear_button.grid(row=16, column=0, columnspan=2, pady=5)
+        self.clear_button.grid(row=17, column=0, columnspan=2, pady=5)
 
         # --- Output Labels ---
         ttk.Label(self.results_frame, text="--- Results ---").grid(row=0, column=0, columnspan=2, pady=10)
@@ -154,11 +177,11 @@ class BatteryCalculatorGUI:
         self.charge_time_label.grid(row=4, column=1, sticky=tk.E, padx=5, pady=5)
         ttk.Label(self.results_frame, text="hours").grid(row=4, column=2, sticky=tk.W)
 
-        ttk.Label(self.results_frame, text="Miles/Wh:").grid(row=5, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(self.results_frame, text="Miles/Wh (Adjusted):").grid(row=5, column=0, sticky=tk.W, padx=5, pady=5)
         self.miles_per_wh_label = ttk.Label(self.results_frame, text="")
         self.miles_per_wh_label.grid(row=5, column=1, sticky=tk.E, padx=5, pady=5)
 
-        ttk.Label(self.results_frame, text="Miles/Ah:").grid(row=6, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(self.results_frame, text="Miles/Ah (Adjusted):").grid(row=6, column=0, sticky=tk.W, padx=5, pady=5)
         self.miles_per_ah_label = ttk.Label(self.results_frame, text="")
         self.miles_per_ah_label.grid(row=6, column=1, sticky=tk.E, padx=5, pady=5)
 
@@ -187,25 +210,34 @@ class BatteryCalculatorGUI:
         ttk.Label(self.results_frame, text="Motor Watts:").grid(row=13, column=0, sticky=tk.W, padx=5)
         self.breakdown_motor_watts_label = ttk.Label(self.results_frame, text="")
         self.breakdown_motor_watts_label.grid(row=13, column=1, sticky=tk.E, padx=5)
+        
+        ttk.Label(self.results_frame, text="Wheel Diameter:").grid(row=14, column=0, sticky=tk.W, padx=5)
+        self.breakdown_wheel_diameter_label = ttk.Label(self.results_frame, text="")
+        self.breakdown_wheel_diameter_label.grid(row=14, column=1, sticky=tk.E, padx=5)
 
-        ttk.Label(self.results_frame, text="Charge Rate:").grid(row=14, column=0, sticky=tk.W, padx=5)
+        ttk.Label(self.results_frame, text="Charge Rate:").grid(row=15, column=0, sticky=tk.W, padx=5)
         self.breakdown_charge_rate_label = ttk.Label(self.results_frame, text="")
-        self.breakdown_charge_rate_label.grid(row=14, column=1, sticky=tk.E, padx=5)
+        self.breakdown_charge_rate_label.grid(row=15, column=1, sticky=tk.E, padx=5)
 
-        ttk.Label(self.results_frame, text="Current State %:").grid(row=15, column=0, sticky=tk.W, padx=5)
+        ttk.Label(self.results_frame, text="Current State %:").grid(row=16, column=0, sticky=tk.W, padx=5)
         self.breakdown_current_state_percent_label = ttk.Label(self.results_frame, text="")
-        self.breakdown_current_state_percent_label.grid(row=15, column=1, sticky=tk.E, padx=5)
+        self.breakdown_current_state_percent_label.grid(row=16, column=1, sticky=tk.E, padx=5)
 
-        ttk.Label(self.results_frame, text="Current State V:").grid(row=16, column=0, sticky=tk.W, padx=5)
+        ttk.Label(self.results_frame, text="Current State V:").grid(row=17, column=0, sticky=tk.W, padx=5)
         self.breakdown_current_state_voltage_label = ttk.Label(self.results_frame, text="")
-        self.breakdown_current_state_voltage_label.grid(row=16, column=1, sticky=tk.E, padx=5)
+        self.breakdown_current_state_voltage_label.grid(row=17, column=1, sticky=tk.E, padx=5)
 
         # --- Emojis ---
         emoji_label = ttk.Label(self.results_frame, text="🚲🔋🛴", font=("Arial", 30))
-        emoji_label.grid(row=17, column=0, columnspan=2, pady=10)
+        emoji_label.grid(row=18, column=0, columnspan=2, pady=10)
+
+        # --- Attribution ---
+        attribution_label = ttk.Label(self.results_frame, text="Made by Adam of Gobytego", font=("Arial", 10, "italic"))
+        attribution_label.grid(row=19, column=0, columnspan=2, pady=5)
+
 
         # --- Padding and Weight ---
-        for i in range(18):
+        for i in range(20): # Adjusted for new breakdown label and attribution
             self.results_frame.grid_rowconfigure(i, weight=1)
         self.results_frame.grid_columnconfigure(1, weight=1)
         self.input_frame.grid_columnconfigure(1, weight=1)
@@ -365,6 +397,7 @@ class BatteryCalculatorGUI:
         capacity_type = self.capacity_type_combo.get()
         capacity = self.capacity_entry.get()
         motor_wattage = self.motor_wattage_entry.get()
+        wheel_diameter = self.wheel_diameter_entry.get() # Get wheel diameter for breakdown
         charge_rate = self.charge_rate_entry.get()
 
         self.breakdown_voltage_label.config(text=nominal_voltage)
@@ -399,6 +432,7 @@ class BatteryCalculatorGUI:
             self.breakdown_wh_label.config(text="Div/0 Error")
 
         self.breakdown_motor_watts_label.config(text=motor_wattage)
+        self.breakdown_wheel_diameter_label.config(text=f"{wheel_diameter} in") # Update breakdown label
         self.breakdown_charge_rate_label.config(text=charge_rate)
 
         current_percentage, actual_current_voltage = self.get_current_battery_percentage()
@@ -418,76 +452,51 @@ class BatteryCalculatorGUI:
             nominal_voltage = float(self.voltage_entry.get()) # Nominal voltage
             capacity_type = self.capacity_type_combo.get()
             capacity = float(self.capacity_entry.get())
-            motor_wattage = float(self.motor_wattage_entry.get())
             driving_style = self.driving_style_combo.get()
+            wheel_diameter = float(self.wheel_diameter_entry.get()) # New: Get wheel diameter
             
-            min_v, max_v, series_cells = self.get_derived_voltage_range_and_s() # Get S from here
-            if series_cells is None: # Error handled by get_derived_voltage_range_and_s
-                return
-
-            if nominal_voltage <= 0 or capacity <= 0 or motor_wattage <= 0:
-                messagebox.showerror("Error", "Please enter valid positive numbers for nominal voltage, capacity, and motor wattage.")
+            if nominal_voltage <= 0 or capacity <= 0 or wheel_diameter <= 0:
+                messagebox.showerror("Error", "Please enter valid positive numbers for nominal voltage, capacity, and wheel diameter.")
                 return
 
             if capacity_type == "Wh":
                 total_energy_wh = capacity
-                try:
-                    total_capacity_ah = total_energy_wh / nominal_voltage # Use nominal voltage for Ah calculation
-                except ZeroDivisionError:
-                    total_capacity_ah = 0
             else:  # capacity_type == "Ah"
-                total_capacity_ah = capacity
-                total_energy_wh = capacity * nominal_voltage # Use nominal voltage for Wh calculation
+                total_energy_wh = capacity * nominal_voltage # Convert Ah to Wh using nominal voltage
 
-            # Adjust power consumption based on driving style percentage
-            if driving_style == "Agressive":
-                power_consumption_w = motor_wattage * 1.0
-            elif driving_style == "Casual":
-                power_consumption_w = motor_wattage * 0.5
-            elif driving_style == "Eco":
-                power_consumption_w = motor_wattage * 0.25
-            else:
-                power_consumption_w = motor_wattage * 0.5 # Default to casual if somehow not selected
+            # --- Calculate Adjusted Wh/mile based on Wheel Diameter and Driving Style ---
+            interpolation_factor = (wheel_diameter - self.SMALL_WHEEL_REF) / (self.LARGE_WHEEL_REF - self.SMALL_WHEEL_REF)
+            
+            # Clamp factor between 0 and 1 to ensure it stays within our defined range
+            interpolation_factor = max(0.0, min(1.0, interpolation_factor))
 
-            # Calculate estimated runtime in hours at 100% battery
-            if power_consumption_w > 0:
-                estimated_runtime_full_charge = total_energy_wh / power_consumption_w
-            else:
-                messagebox.showerror("Error", "Motor wattage must be greater than zero for power consumption.")
+            base_wh_per_mile_small = self.SMALL_WHEEL_EFFICIENCY.get(driving_style)
+            base_wh_per_mile_large = self.LARGE_WHEEL_EFFICIENCY.get(driving_style)
+
+            if base_wh_per_mile_small is None or base_wh_per_mile_large is None:
+                messagebox.showerror("Error", "Invalid driving style selected for efficiency lookup.")
                 return
 
-            # TEMPORARY EMPIRICAL ADJUSTMENT (based on previous findings)
-            estimated_runtime_full_charge /= 2
+            adjusted_wh_per_mile = (base_wh_per_mile_small * (1 - interpolation_factor) +
+                                   base_wh_per_mile_large * interpolation_factor)
 
-            # Calibrated miles/hour equivalents based on your feedback
-            if driving_style == "Agressive":
-                estimated_range = estimated_runtime_full_charge * 18.0
-                calculated_unit = "miles"
-            elif driving_style == "Casual":
-                estimated_range = estimated_runtime_full_charge * 13.5
-                calculated_unit = "miles"
-            elif driving_style == "Eco":
-                estimated_range = estimated_runtime_full_charge * 9.0
-                calculated_unit = "miles"
-            else:
-                estimated_range = 0
-                calculated_unit = "unknown"
+            if adjusted_wh_per_mile <= 0:
+                messagebox.showerror("Error", "Calculated efficiency (Wh/mile) must be greater than zero.")
+                return
+
+            # Calculate estimated range directly from total Wh and adjusted Wh/mile efficiency
+            estimated_range = total_energy_wh / adjusted_wh_per_mile
+            calculated_unit = "miles" # Assuming miles for range
 
             self.calculated_range_label.config(text=f"{estimated_range:.2f}")
             self.calculated_range_unit_label.config(text=calculated_unit)
 
-            # Calculate miles per Wh and Ah
-            if total_energy_wh > 0:
-                miles_per_wh = estimated_range / total_energy_wh
-                self.miles_per_wh_label.config(text=f"{miles_per_wh:.2f}")
-            else:
-                self.miles_per_wh_label.config(text="N/A")
+            # Calculate miles per Wh and Ah based on the chosen efficiency
+            miles_per_wh = 1 / adjusted_wh_per_mile
+            self.miles_per_wh_label.config(text=f"{miles_per_wh:.2f}")
 
-            if total_capacity_ah > 0:
-                miles_per_ah = estimated_range / total_capacity_ah
-                self.miles_per_ah_label.config(text=f"{miles_per_ah:.2f}")
-            else:
-                self.miles_per_ah_label.config(text="N/A")
+            miles_per_ah = nominal_voltage / adjusted_wh_per_mile if adjusted_wh_per_mile > 0 else 0
+            self.miles_per_ah_label.config(text=f"{miles_per_ah:.2f}")
 
             # Store full charge range for remaining range calculation
             self.full_charge_range = estimated_range
@@ -496,8 +505,8 @@ class BatteryCalculatorGUI:
         except ValueError:
             messagebox.showerror("Error", "Invalid input. Please enter numeric values for all relevant fields.")
         except ZeroDivisionError:
-            messagebox.showerror("Error", "Nominal voltage, capacity, or motor wattage cannot be zero.")
-        except AttributeError:
+            messagebox.showerror("Error", "Nominal voltage, capacity, wheel diameter, or efficiency cannot be zero.")
+        except AttributeError: # Happens if full_charge_range is not yet set
             self.full_charge_range = 0
             self.range_unit = "miles"
 
@@ -566,6 +575,7 @@ class BatteryCalculatorGUI:
             capacity_type = self.capacity_type_combo.get()
             capacity = self.capacity_entry.get()
             motor_wattage = self.motor_wattage_entry.get()
+            wheel_diameter = self.wheel_diameter_entry.get() # Save new field
             driving_style = self.driving_style_combo.get()
             charge_rate = self.charge_rate_entry.get()
             current_percentage = self.current_percentage_entry.get()
@@ -579,6 +589,7 @@ class BatteryCalculatorGUI:
                 "capacity_type": capacity_type,
                 "capacity": capacity,
                 "motor_wattage": motor_wattage,
+                "wheel_diameter": wheel_diameter, # Add to settings
                 "driving_style": driving_style,
                 "charge_rate": charge_rate,
                 "current_percentage": current_percentage,
@@ -614,6 +625,7 @@ class BatteryCalculatorGUI:
         self.current_percentage_entry.delete(0, tk.END)
         self.current_voltage_entry.delete(0, tk.END)
         self.motor_wattage_entry.delete(0, tk.END)
+        self.wheel_diameter_entry.delete(0, tk.END) # Clear new field
         self.driving_style_combo.set("Casual")
         self.charge_input_method.set("percentage") # Reset to default
         self.toggle_charge_input() # Update visibility
@@ -631,6 +643,7 @@ class BatteryCalculatorGUI:
         self.breakdown_ah_label.config(text="")
         self.breakdown_wh_label.config(text="")
         self.breakdown_motor_watts_label.config(text="")
+        self.breakdown_wheel_diameter_label.config(text="") # New breakdown label
         self.breakdown_charge_rate_label.config(text="")
         self.breakdown_current_state_percent_label.config(text="")
         self.breakdown_current_state_voltage_label.config(text="")
@@ -676,6 +689,23 @@ def run_cli_calculator():
         60: 16,
         72: 20,
     }
+    
+    # Reference Wheel Sizes for Wh/mile interpolation (CLI specific for self-containment)
+    SMALL_WHEEL_REF_CLI = 10.0
+    LARGE_WHEEL_REF_CLI = 27.5
+
+    # Average Wh/mile efficiency based on driving style FOR SMALL AND LARGE WHEELS (CLI specific)
+    # These values are recalibrated based on the user's provided examples.
+    SMALL_WHEEL_EFFICIENCY_CLI = {
+        "Eco": 33.28,       # Updated from Bike 1 (48V*10.4Ah / 15 miles = 33.28 Wh/mile)
+        "Casual": 30.0,     # Kept original
+        "Agressive": 45.0   # Kept original
+    }
+    LARGE_WHEEL_EFFICIENCY_CLI = {
+        "Eco": 41.6,        # Updated from Bike 2 (52V*20Ah / 25 miles = 41.6 Wh/mile)
+        "Casual": 65.0,     # Kept original
+        "Agressive": 80.0   # Kept original
+    }
 
     # Load settings for default values
     settings = {}
@@ -692,6 +722,7 @@ def run_cli_calculator():
     default_capacity = settings.get('capacity')
     default_charge_rate = settings.get('charge_rate')
     default_motor_wattage = settings.get('motor_wattage')
+    default_wheel_diameter = settings.get('wheel_diameter') # New default
     default_current_percentage = settings.get('current_percentage', "0")
     default_current_voltage = settings.get('current_voltage')
     default_capacity_type = settings.get('capacity_type', 'Wh')
@@ -756,6 +787,9 @@ def run_cli_calculator():
     motor_wattage = get_cli_input("Enter Motor Wattage (W)", default_motor_wattage, float, 
                                    lambda x: x > 0, "Motor wattage must be a positive number.")
     
+    wheel_diameter = get_cli_input("Enter Wheel Diameter (inches)", default_wheel_diameter, float,
+                                    lambda x: x > 0, "Wheel diameter must be a positive number.")
+
     driving_style = get_cli_input("Enter Driving Style (Agressive/Casual/Eco)", default_driving_style, str, 
                                    lambda x: x.lower() in ["agressive", "casual", "eco"], "Invalid driving style. Please enter 'Agressive', 'Casual', or 'Eco'.").capitalize() # Capitalize for consistency
 
@@ -773,34 +807,29 @@ def run_cli_calculator():
         total_capacity_ah = capacity
         total_energy_wh = capacity * nominal_voltage # Use nominal_voltage for this
 
-    # Adjust power consumption based on driving style percentage
-    power_consumption_w = 0
-    if driving_style == "Agressive":
-        power_consumption_w = motor_wattage * 1.0
-    elif driving_style == "Casual":
-        power_consumption_w = motor_wattage * 0.5
-    elif driving_style == "Eco":
-        power_consumption_w = motor_wattage * 0.25
-    else:
-        power_consumption_w = motor_wattage * 0.5
+    # --- UPDATED RANGE CALCULATION WITH WHEEL DIAMETER ---
+    interpolation_factor = (wheel_diameter - SMALL_WHEEL_REF_CLI) / (LARGE_WHEEL_REF_CLI - SMALL_WHEEL_REF_CLI)
+    interpolation_factor = max(0.0, min(1.0, interpolation_factor)) # Clamp between 0 and 1
 
-    estimated_runtime_full_charge = 0
-    if power_consumption_w > 0:
-        estimated_runtime_full_charge = total_energy_wh / power_consumption_w
-    
-    estimated_runtime_full_charge /= 2 # Empirical adjustment
+    base_wh_per_mile_small = SMALL_WHEEL_EFFICIENCY_CLI.get(driving_style)
+    base_wh_per_mile_large = LARGE_WHEEL_EFFICIENCY_CLI.get(driving_style)
 
-    estimated_range = 0
-    calculated_unit = "miles"
-    if driving_style == "Agressive":
-        estimated_range = estimated_runtime_full_charge * 18.0
-    elif driving_style == "Casual":
-        estimated_range = estimated_runtime_full_charge * 13.5
-    elif driving_style == "Eco":
-        estimated_range = estimated_runtime_full_charge * 9.0
+    if base_wh_per_mile_small is None or base_wh_per_mile_large is None:
+        print("Error: Could not determine valid Wh/mile efficiency for the selected driving style.")
+        sys.exit(1)
 
-    miles_per_wh = estimated_range / total_energy_wh if total_energy_wh > 0 else 0
-    miles_per_ah = estimated_range / total_capacity_ah if total_capacity_ah > 0 else 0
+    adjusted_wh_per_mile = (base_wh_per_mile_small * (1 - interpolation_factor) +
+                           base_wh_per_mile_large * interpolation_factor)
+
+    if adjusted_wh_per_mile <= 0:
+        print("Error: Calculated efficiency (Wh/mile) must be greater than zero.")
+        sys.exit(1)
+
+    estimated_range = total_energy_wh / adjusted_wh_per_mile
+    calculated_unit = "miles" # Assuming miles for range
+
+    miles_per_wh = 1 / adjusted_wh_per_mile
+    miles_per_ah = nominal_voltage / adjusted_wh_per_mile if adjusted_wh_per_mile > 0 else 0
 
     remaining_capacity_ah_to_full = total_capacity_ah * (1 - (current_percentage / 100)) if current_percentage is not None else 0
     estimated_charge_time = remaining_capacity_ah_to_full / charge_rate if charge_rate > 0 else 0
@@ -814,8 +843,8 @@ def run_cli_calculator():
     print(f"Remaining Range: {remaining_range:.2f} {calculated_unit}")
     print(f"Remaining Charge: {remaining_charge_percentage:.2f}%" if current_percentage is not None else "Remaining Charge: N/A")
     print(f"Estimated Charge Time: {estimated_charge_time:.2f} hours")
-    print(f"Miles/Wh: {miles_per_wh:.2f}")
-    print(f"Miles/Ah: {miles_per_ah:.2f}")
+    print(f"Miles/Wh (Adjusted): {miles_per_wh:.2f}")
+    print(f"Miles/Ah (Adjusted): {miles_per_ah:.2f}")
 
     print("\n--- Breakdown ---")
     print(f"Nominal Voltage: {nominal_voltage:.1f}V")
@@ -824,10 +853,13 @@ def run_cli_calculator():
     print(f"Ah: {total_capacity_ah:.2f}Ah")
     print(f"Wh: {total_energy_wh:.2f}Wh")
     print(f"Motor Watts: {motor_wattage:.2f}W")
+    print(f"Wheel Diameter: {wheel_diameter:.1f} inches")
     print(f"Charge Rate: {charge_rate:.2f}A")
     print(f"Current State Percentage: {current_percentage:.2f}%" if current_percentage is not None else "Current State Percentage: N/A")
     print(f"Current State Voltage: {current_voltage:.2f}V" if current_voltage is not None else "Current State Voltage: N/A")
     print("\n🚲🔋🛴")
+    print("Made by Adam of Gobytego") # Added attribution for CLI
+
 
 if __name__ == "__main__":
     if "--cli" in sys.argv:
