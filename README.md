@@ -1,9 +1,14 @@
 # BatteryUtils
 
 Updated 06/17/2025
-*Added the ability to have profiles for diffrent vehicles.
-*Added the ability to enter the wheelsize for better accuracy.
-*A few other changes here and there.
+
+  *Added the ability to have profiles for diffrent vehicles.
+  
+  *Added the ability to enter the wheelsize for better accuracy.
+  
+  *A few other changes here and there.
+
+
 
 A set of Battery tools for e-bikes/scooters This includes: 
 Battery range Calculator to get a estimate of how many miles you can ride on the remaining charge you have left on your battery. 
