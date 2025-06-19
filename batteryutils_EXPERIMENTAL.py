@@ -61,6 +61,9 @@ class BatteryCalculatorGUI(QWidget):
         self.use_logged_efficiency = False
         self.logged_wh_per_mile_average = 0.0
 
+        # New flag to suppress QMessageBox during initial load
+        self.is_initializing = True 
+
         self.init_ui()
 
         # Load all profiles and then initialize the combo box
@@ -68,6 +71,9 @@ class BatteryCalculatorGUI(QWidget):
         self.update_profile_combo()
         # Load data for the initial profile (either last active or default)
         self.load_profile_data(self.current_profile_name)
+
+        # Set initialization flag to False after all initial loading is complete
+        self.is_initializing = False
 
     def init_ui(self):
         # Main Layout for the entire window
@@ -212,6 +218,12 @@ class BatteryCalculatorGUI(QWidget):
 
         self.percent_radio.setChecked(True) # Default for new profiles
 
+        # NEW: Preferred Low Battery Cutoff
+        self.charging_layout.addWidget(QLabel("Preferred Cutoff (%):"), 4, 0)
+        self.preferred_cutoff_entry = QLineEdit("25") # Default to 25%
+        self.charging_layout.addWidget(self.preferred_cutoff_entry, 4, 1)
+
+
         self.input_layout.addWidget(self.charging_group_box, 2, 0, 1, 2)
 
         # --- Motor and Bike Information ---
@@ -272,19 +284,19 @@ class BatteryCalculatorGUI(QWidget):
         self.results_group_box = QGroupBox("--- Results ---")
         self.results_group_layout = QGridLayout(self.results_group_box)
 
-        self.results_group_layout.addWidget(QLabel("Estimated Range:"), 0, 0)
+        self.results_group_layout.addWidget(QLabel("Estimated Range (100%):"), 0, 0)
         self.calculated_range_label = QLabel("")
         self.results_group_layout.addWidget(self.calculated_range_label, 0, 1)
         self.calculated_range_unit_label = QLabel("miles")
         self.results_group_layout.addWidget(self.calculated_range_unit_label, 0, 2)
 
-        self.results_group_layout.addWidget(QLabel("Remaining Range:"), 1, 0)
+        self.results_group_layout.addWidget(QLabel("Remaining Range (to 0%):"), 1, 0)
         self.remaining_range_label = QLabel("")
         self.results_group_layout.addWidget(self.remaining_range_label, 1, 1)
         self.remaining_range_unit_label = QLabel("miles")
         self.results_group_layout.addWidget(self.remaining_range_unit_label, 1, 2)
 
-        self.results_group_layout.addWidget(QLabel("Remaining Charge %:"), 2, 0)
+        self.results_group_layout.addWidget(QLabel("Remaining Charge (% to 0%):"), 2, 0)
         self.remaining_charge_percentage_label = QLabel("")
         self.results_group_layout.addWidget(self.remaining_charge_percentage_label, 2, 1)
 
@@ -292,24 +304,36 @@ class BatteryCalculatorGUI(QWidget):
         self.percentage_after_charge_label = QLabel("")
         self.results_group_layout.addWidget(self.percentage_after_charge_label, 3, 1)
 
-        self.results_group_layout.addWidget(QLabel("Estimated Charge Time:"), 4, 0)
+        self.results_group_layout.addWidget(QLabel("Estimated Charge Time (to 100%):"), 4, 0)
         self.charge_time_label = QLabel("")
         self.results_group_layout.addWidget(self.charge_time_label, 4, 1)
         self.results_group_layout.addWidget(QLabel("hours"), 4, 2)
+        
+        # NEW: Range to Preferred Cutoff
+        self.results_group_layout.addWidget(QLabel("Range to Cutoff:"), 5, 0)
+        self.range_to_cutoff_label = QLabel("")
+        self.results_group_layout.addWidget(self.range_to_cutoff_label, 5, 1)
+        self.results_group_layout.addWidget(QLabel("miles"), 5, 2)
 
-        self.results_group_layout.addWidget(QLabel("Miles/Wh (Adjusted):"), 5, 0)
+        # NEW: Charge Time from Preferred Cutoff
+        self.results_group_layout.addWidget(QLabel("Charge Time from Cutoff:"), 6, 0)
+        self.charge_time_from_cutoff_label = QLabel("")
+        self.results_group_layout.addWidget(self.charge_time_from_cutoff_label, 6, 1)
+        self.results_group_layout.addWidget(QLabel("hours"), 6, 2)
+
+        self.results_group_layout.addWidget(QLabel("Miles/Wh (Adjusted):"), 7, 0)
         self.miles_per_wh_label = QLabel("")
-        self.results_group_layout.addWidget(self.miles_per_wh_label, 5, 1)
+        self.results_group_layout.addWidget(self.miles_per_wh_label, 7, 1)
 
-        self.results_group_layout.addWidget(QLabel("Miles/Ah (Adjusted):"), 6, 0)
+        self.results_group_layout.addWidget(QLabel("Miles/Ah (Adjusted):"), 8, 0)
         self.miles_per_ah_label = QLabel("")
-        self.results_group_layout.addWidget(self.miles_per_ah_label, 6, 1)
+        self.results_group_layout.addWidget(self.miles_per_ah_label, 8, 1)
 
         # New: Efficiency Source Indicator
-        self.results_group_layout.addWidget(QLabel("Efficiency Source:"), 7, 0)
+        self.results_group_layout.addWidget(QLabel("Efficiency Source:"), 9, 0)
         self.efficiency_source_label = QLabel("Predicted")
         self.efficiency_source_label.setStyleSheet("font-style: italic; color: #555;")
-        self.results_group_layout.addWidget(self.efficiency_source_label, 7, 1, 1, 2)
+        self.results_group_layout.addWidget(self.efficiency_source_label, 9, 1, 1, 2)
 
         # New: Reset Efficiency Button
         self.reset_efficiency_button = QPushButton("Reset Efficiency")
@@ -327,7 +351,7 @@ class BatteryCalculatorGUI(QWidget):
             "   background-color: #ec971f;"
             "}"
         )
-        self.results_group_layout.addWidget(self.reset_efficiency_button, 8, 0, 1, 3, Qt.AlignmentFlag.AlignRight)
+        self.results_group_layout.addWidget(self.reset_efficiency_button, 10, 0, 1, 3, Qt.AlignmentFlag.AlignRight)
 
 
         self.results_layout.addWidget(self.results_group_box, 0, 0, 1, 2)
@@ -380,6 +404,17 @@ class BatteryCalculatorGUI(QWidget):
         self.breakdown_group_layout.addWidget(QLabel("Current State V:"), 10, 0)
         self.breakdown_current_state_voltage_label = QLabel("")
         self.breakdown_group_layout.addWidget(self.breakdown_current_state_voltage_label, 10, 1)
+        
+        # NEW: Breakdown for Preferred Cutoff
+        self.breakdown_group_layout.addWidget(QLabel("Preferred Cutoff %:"), 11, 0)
+        self.breakdown_preferred_cutoff_label = QLabel("")
+        self.breakdown_group_layout.addWidget(self.breakdown_preferred_cutoff_label, 11, 1)
+
+        # NEW: Breakdown for Preferred Cutoff Voltage
+        self.breakdown_group_layout.addWidget(QLabel("Preferred Cutoff V:"), 12, 0) # New row for voltage
+        self.breakdown_preferred_cutoff_voltage_label = QLabel("")
+        self.breakdown_group_layout.addWidget(self.breakdown_preferred_cutoff_voltage_label, 12, 1)
+
 
         self.results_layout.addWidget(self.breakdown_group_box, 1, 0, 1, 2)
 
@@ -575,7 +610,7 @@ class BatteryCalculatorGUI(QWidget):
             "motor_wattage": "",
             "wheel_diameter": "",
             "driving_style": "Casual",
-            "charging_duration_hours": "",
+            "preferred_cutoff_percentage": "25", # NEW: Default cutoff
             "ride_log": [] # New entry for ride log data
         }
 
@@ -606,6 +641,7 @@ class BatteryCalculatorGUI(QWidget):
         self.charging_duration_combo.setCurrentText(settings.get("charging_duration_hours", ""))
         self.current_percentage_entry.setText(settings.get("current_percentage", "0"))
         self.current_voltage_entry.setText(settings.get("current_voltage", ""))
+        self.preferred_cutoff_entry.setText(settings.get("preferred_cutoff_percentage", "25")) # NEW: Load cutoff
         
         # Set radio button based on loaded method
         charge_method = settings.get("charge_input_method", "percentage")
@@ -624,7 +660,7 @@ class BatteryCalculatorGUI(QWidget):
         self.update_voltage_info_labels()
 
         # Reset logged efficiency state for the new profile
-        self.reset_efficiency_source() # This will also clear the efficiency_source_label
+        self.reset_efficiency_source(show_message=False) # Do not show message on profile load
 
         # Update the ride log table for the Ride Log tab
         self.update_ride_log_table()
@@ -654,6 +690,7 @@ class BatteryCalculatorGUI(QWidget):
             "motor_wattage": self.motor_wattage_entry.text(),
             "wheel_diameter": self.wheel_diameter_entry.text(),
             "driving_style": self.driving_style_combo.currentText(),
+            "preferred_cutoff_percentage": self.preferred_cutoff_entry.text(), # NEW: Save cutoff
             "ride_log": self.all_profiles.get(profile_name, {}).get("ride_log", []) # Preserve existing log
         }
         self.all_profiles[profile_name] = current_settings
@@ -832,6 +869,9 @@ class BatteryCalculatorGUI(QWidget):
         
         # Calculate time to full charge and remaining range/percentage based on current state
         self.calculate_charge_time_and_remaining_range()
+        
+        # NEW: Calculate range to cutoff and charge time from cutoff
+        self.calculate_cutoff_metrics()
 
         # Get inputs for optional percentage after charge calculation
         charger_rate_str = self.charge_rate_entry.text()
@@ -843,122 +883,8 @@ class BatteryCalculatorGUI(QWidget):
                 duration_hours = float(charging_duration_str.split(" ")[0])
                 self.calculate_percentage_after_charge(duration_hours)
             except ValueError:
-                QMessageBox.warning(self, "Input Error", "Invalid charging duration format. Please select from the dropdown or clear it to disable this calculation.")
-                self.percentage_after_charge_label.setText("N/A")
-        else:
-            self.percentage_after_charge_label.setText("") # Clear this if no duration is set or charger rate is missing
-
-    def get_derived_voltage_range_and_s(self):
-        """Calculates min and max voltage and the series cell count based on user input (inferred or manual).
-           Does NOT show messageboxes directly; returns None for invalid inputs."""
-        series_cells = None
-        nominal_voltage_str = self.voltage_entry.text()
-
-        try:
-            nominal_voltage_float = float(nominal_voltage_str)
-            inferred_s = self.NOMINAL_VOLTAGE_TO_SERIES_CELLS.get(int(round(nominal_voltage_float)))
-            
-            if inferred_s is not None:
-                self.series_cells_entry.setText(str(inferred_s))
-                # Do not show series cells input if inferred
-            else:
-                # Show if nominal voltage not found in map
-                self.battery_info_layout.addWidget(self.series_cells_label, 1, 0) # Place at row 1, col 0
-                self.battery_info_layout.addWidget(self.series_cells_entry, 1, 1) # Place at row 1, col 1
-                self.series_cells_label.show()
-                self.series_cells_entry.show()
-                self.min_voltage_info_label.setText("Empty V: N/A")
-                self.max_voltage_info_label.setText("Full Charge V: N/A")
-                return
-
-        except ValueError:
-            inferred_s = None
-            # Show if nominal voltage input is not a valid number
-            self.battery_info_layout.addWidget(self.series_cells_label, 1, 0)
-            self.battery_info_layout.addWidget(self.series_cells_entry, 1, 1)
-            self.series_cells_label.show()
-            self.series_cells_entry.show()
-            self.min_voltage_info_label.setText("Empty V: N/A")
-            self.max_voltage_info_label.setText("Full Charge V: N/A")
-            return
-
-        series_cells = inferred_s
-        if series_cells is None:
-            try:
-                series_cells = int(self.series_cells_entry.text())
-            except ValueError:
-                series_cells = None
-
-        if series_cells is not None and series_cells > 0:
-            min_v = series_cells * self.CELL_VOLTAGE_EMPTY
-            max_v = series_cells * self.CELL_VOLTAGE_FULL
-            self.min_voltage_info_label.setText(f"Empty V: {min_v:.1f} (0%)")
-            self.max_voltage_info_label.setText(f"Full Charge V: {max_v:.1f} (100%)")
-        else:
-            self.min_voltage_info_label.setText("Empty V: N/A")
-            self.max_voltage_info_label.setText("N/A")
-
-    def toggle_charge_input(self):
-        # Remove widgets from layout before potentially re-adding them
-        # Check if parent is set before removing
-        if self.current_percentage_label.parent() == self.charging_group_box:
-            self.charging_layout.removeWidget(self.current_percentage_label)
-            self.charging_layout.removeWidget(self.current_percentage_entry)
-        if self.current_voltage_label.parent() == self.charging_group_box:
-            self.charging_layout.removeWidget(self.current_voltage_label)
-            self.charging_layout.removeWidget(self.current_voltage_entry)
-
-        # Hide all to reset
-        self.current_percentage_label.hide()
-        self.current_percentage_entry.hide()
-        self.current_voltage_label.hide()
-        self.current_voltage_entry.hide()
-
-        # Add based on checked state
-        if self.percent_radio.isChecked():
-            self.charging_layout.addWidget(self.current_percentage_label, 3, 0)
-            self.charging_layout.addWidget(self.current_percentage_entry, 3, 1)
-            self.current_percentage_label.show()
-            self.current_percentage_entry.show()
-        else: # Voltage radio is checked
-            self.charging_layout.addWidget(self.current_voltage_label, 3, 0)
-            self.charging_layout.addWidget(self.current_voltage_entry, 3, 1)
-            self.current_voltage_label.show()
-            self.current_voltage_entry.show()
-        
-        # Ensure layout updates correctly after visibility changes
-        self.charging_group_box.adjustSize()
-        self.input_frame.adjustSize()
-
-
-    def update_capacity_label(self):
-        selected_type = self.capacity_type_combo.currentText()
-        if selected_type == "Wh":
-            self.capacity_label.setText("Battery Capacity (Wh):")
-        elif selected_type == "Ah":
-            self.capacity_label.setText("Battery Capacity (Ah):")
-
-    def calculate_all(self):
-        # Update breakdown first to show current input values, even if calculations fail
-        self.update_breakdown()
-
-        # Always attempt to calculate estimated range
-        self.calculate_range()
-        
-        # Calculate time to full charge and remaining range/percentage based on current state
-        self.calculate_charge_time_and_remaining_range()
-
-        # Get inputs for optional percentage after charge calculation
-        charger_rate_str = self.charge_rate_entry.text()
-        charging_duration_str = self.charging_duration_combo.currentText()
-        
-        # Only attempt "percentage after charge" calculation if both inputs are present
-        if charging_duration_str and charger_rate_str:
-            try:
-                duration_hours = float(charging_duration_str.split(" ")[0])
-                self.calculate_percentage_after_charge(duration_hours)
-            except ValueError:
-                QMessageBox.warning(self, "Input Error", "Invalid charging duration format. Please select from the dropdown or clear it to disable this calculation.")
+                if not self.is_initializing: # Suppress during initialization
+                    QMessageBox.warning(self, "Input Error", "Invalid charging duration format. Please select from the dropdown or clear it to disable this calculation.")
                 self.percentage_after_charge_label.setText("N/A")
         else:
             self.percentage_after_charge_label.setText("") # Clear this if no duration is set or charger rate is missing
@@ -1067,19 +993,22 @@ class BatteryCalculatorGUI(QWidget):
             charge_rate = float(charge_rate_str) if charge_rate_str else 0.0
 
             if nominal_voltage <= 0 or capacity <= 0 or charge_rate <= 0:
-                QMessageBox.warning(self, "Input Warning", "Nominal voltage, battery capacity, and charger rate must be positive numbers for 'Percentage after Charge' calculation.")
+                if not self.is_initializing: # Suppress during initialization
+                    pass # Suppress this specific message as it can be repetitive during initial load
                 return
 
             total_capacity_wh = capacity if capacity_type == "Wh" else capacity * nominal_voltage
             total_capacity_ah = total_capacity_wh / nominal_voltage if nominal_voltage > 0 else 0
 
             if total_capacity_ah <= 0:
-                QMessageBox.warning(self, "Calculation Error", "Calculated total battery capacity (Ah) is zero or negative. Cannot determine 'Percentage after Charge'.")
+                if not self.is_initializing: # Suppress during initialization
+                    pass # Suppress repetitive message
                 return
 
             current_percentage, _ = self.get_current_battery_percentage()
             if current_percentage is None:
-                QMessageBox.warning(self, "Input Warning", "Cannot calculate 'Percentage after Charge' due to invalid current battery state (percentage/voltage) or invalid battery info.")
+                if not self.is_initializing: # Suppress during initialization
+                    pass # Suppress repetitive message
                 return
 
             current_ah = total_capacity_ah * (current_percentage / 100)
@@ -1091,10 +1020,111 @@ class BatteryCalculatorGUI(QWidget):
             self.percentage_after_charge_label.setText(f"{new_percentage:.2f}%")
 
         except ValueError:
-            QMessageBox.critical(self, "Input Error", "Invalid numeric input for charging calculations (e.g., Duration, Charger Rate, or Battery Info).")
+            if not self.is_initializing: # Suppress during initialization
+                pass # Suppress repetitive message
         except ZeroDivisionError:
-            QMessageBox.critical(self, "Error", "Division by zero in 'Percentage after Charge' calculation. Check Nominal Voltage, Capacity, or Charge Rate.")
+            if not self.is_initializing: # Suppress during initialization
+                pass # Suppress repetitive message
 
+    def calculate_cutoff_metrics(self):
+        """Calculates range to preferred cutoff and charge time from preferred cutoff."""
+        self.range_to_cutoff_label.setText("")
+        self.charge_time_from_cutoff_label.setText("")
+
+        try:
+            preferred_cutoff_str = self.preferred_cutoff_entry.text()
+            preferred_cutoff_percentage = float(preferred_cutoff_str) if preferred_cutoff_str else 0.0
+
+            if not (0 <= preferred_cutoff_percentage <= 100):
+                if not self.is_initializing:
+                    QMessageBox.warning(self, "Input Error", "Preferred Cutoff Percentage must be between 0 and 100.")
+                return
+
+            current_percentage, _ = self.get_current_battery_percentage()
+            if current_percentage is None:
+                # Error message already handled by get_current_battery_percentage or other checks
+                return
+
+            # Ensure current percentage is greater than cutoff for a meaningful range to cutoff calculation
+            if current_percentage <= preferred_cutoff_percentage:
+                self.range_to_cutoff_label.setText("N/A (At/Below Cutoff)")
+            else:
+                # Calculate range to cutoff
+                nominal_voltage_str = self.voltage_entry.text()
+                capacity_type = self.capacity_type_combo.currentText()
+                capacity_str = self.capacity_entry.text()
+                
+                nominal_voltage = float(nominal_voltage_str) if nominal_voltage_str else 0.0
+                capacity = float(capacity_str) if capacity_str else 0.0
+
+                if nominal_voltage <= 0 or capacity <= 0:
+                    if not self.is_initializing:
+                        pass
+                    return
+                
+                total_energy_wh = capacity if capacity_type == "Wh" else capacity * nominal_voltage
+
+                # Retrieve adjusted_wh_per_mile (from calculate_range, which updates self.efficiency_source_label)
+                # It's better to ensure calculate_range has already run and populated full_charge_range and adjusted_wh_per_mile
+                # If calculate_range fails, full_charge_range will be 0 or N/A
+                if not hasattr(self, 'full_charge_range') or self.full_charge_range <= 0:
+                    pass
+                    return
+                
+                # Calculate the percentage of battery capacity between current and cutoff
+                percent_difference = current_percentage - preferred_cutoff_percentage
+                
+                # Calculate the Wh available in that percentage range
+                wh_available_to_cutoff = total_energy_wh * (percent_difference / 100)
+
+                # Use the same efficiency as the main range calculation
+                # adjusted_wh_per_mile is obtained from calculate_range's logic
+                # We need to ensure we have a valid adjusted_wh_per_mile here.
+                # If calculate_range populated self.miles_per_wh_label, we can derive it.
+                try:
+                    miles_per_wh = float(self.miles_per_wh_label.text()) # Get the value already displayed
+                    adjusted_wh_per_mile = 1 / miles_per_wh if miles_per_wh > 0 else 0
+                except ValueError:
+                    adjusted_wh_per_mile = 0
+
+                if adjusted_wh_per_mile > 0:
+                    range_to_cutoff = wh_available_to_cutoff / adjusted_wh_per_mile
+                    self.range_to_cutoff_label.setText(f"{range_to_cutoff:.2f}")
+                else:
+                    self.range_to_cutoff_label.setText("N/A (Efficiency Error)")
+
+
+            # Calculate charge time from cutoff
+            charge_rate_str = self.charge_rate_entry.text()
+            charge_rate = float(charge_rate_str) if charge_rate_str else 0.0
+
+            if nominal_voltage <= 0 or capacity <= 0 or charge_rate <= 0:
+                if not self.is_initializing:
+                    pass
+                return
+
+            total_capacity_wh = capacity if capacity_type == "Wh" else capacity * nominal_voltage
+            total_capacity_ah = total_capacity_wh / nominal_voltage if nominal_voltage > 0 else 0
+
+            if total_capacity_ah <= 0:
+                if not self.is_initializing:
+                    pass
+                return
+
+            ah_to_charge_from_cutoff = total_capacity_ah * ((100 - preferred_cutoff_percentage) / 100)
+            if charge_rate > 0:
+                charge_time_from_cutoff = ah_to_charge_from_cutoff / charge_rate
+                self.charge_time_from_cutoff_label.setText(f"{charge_time_from_cutoff:.2f}")
+            else:
+                self.charge_time_from_cutoff_label.setText("N/A (Charger Rate is zero)")
+
+
+        except ValueError:
+            if not self.is_initializing:
+                pass
+        except ZeroDivisionError:
+            if not self.is_initializing:
+                pass
 
     def update_breakdown(self):
         """Updates the breakdown section of the GUI with current input values and calculated derived values."""
@@ -1106,6 +1136,7 @@ class BatteryCalculatorGUI(QWidget):
         wheel_diameter = self.wheel_diameter_entry.text()
         charge_rate = self.charge_rate_entry.text()
         charging_duration = self.charging_duration_combo.currentText()
+        preferred_cutoff = self.preferred_cutoff_entry.text() # NEW: Get cutoff
 
         # Update labels with raw input values
         self.breakdown_voltage_label.setText(nominal_voltage)
@@ -1113,6 +1144,8 @@ class BatteryCalculatorGUI(QWidget):
         self.breakdown_wheel_diameter_label.setText(f"{wheel_diameter} in" if wheel_diameter else "N/A")
         self.breakdown_charge_rate_label.setText(charge_rate)
         self.breakdown_charge_duration_label.setText(charging_duration)
+        self.breakdown_preferred_cutoff_label.setText(f"{preferred_cutoff}%" if preferred_cutoff else "N/A") # NEW: Display cutoff
+
 
         # Calculate and update derived values for breakdown
         min_v, max_v, series_cells = self.get_derived_voltage_range_and_s()
@@ -1156,6 +1189,20 @@ class BatteryCalculatorGUI(QWidget):
             self.breakdown_current_state_percent_label.setText("N/A")
             self.breakdown_current_state_voltage_label.setText("N/A")
 
+        # Calculate and display preferred cutoff voltage
+        if preferred_cutoff and min_v is not None and max_v is not None and (max_v - min_v) > 0:
+            try:
+                preferred_cutoff_percentage = float(preferred_cutoff)
+                if 0 <= preferred_cutoff_percentage <= 100:
+                    preferred_cutoff_voltage = min_v + (preferred_cutoff_percentage / 100) * (max_v - min_v)
+                    self.breakdown_preferred_cutoff_voltage_label.setText(f"{preferred_cutoff_voltage:.2f}V")
+                else:
+                    self.breakdown_preferred_cutoff_voltage_label.setText("N/A (Invalid %)")
+            except ValueError:
+                self.breakdown_preferred_cutoff_voltage_label.setText("N/A")
+        else:
+            self.breakdown_preferred_cutoff_voltage_label.setText("N/A")
+
     def calculate_range(self):
         """Calculates and displays the estimated range of the vehicle."""
         # Always clear previous results at the start of calculation
@@ -1177,9 +1224,10 @@ class BatteryCalculatorGUI(QWidget):
             wheel_diameter = float(wheel_diameter_str) if wheel_diameter_str else 0.0
             
             if nominal_voltage <= 0 or capacity <= 0 or wheel_diameter <= 0:
-                QMessageBox.warning(self, "Input Error", "Nominal voltage, battery capacity, and wheel diameter must be positive numbers for range calculation.")
+                if not self.is_initializing: # Suppress during initialization
+                    pass # Suppress repetitive message
                 # Update efficiency source to indicate an issue
-                self.efficiency_source_label.setText("Error in Battery/Bike Info")
+                self.efficiency_source_label.setText("Error")
                 return
 
             if capacity_type == "Wh":
@@ -1191,7 +1239,7 @@ class BatteryCalculatorGUI(QWidget):
             adjusted_wh_per_mile = 0.0
             if self.use_logged_efficiency and self.logged_wh_per_mile_average > 0:
                 adjusted_wh_per_mile = self.logged_wh_per_mile_average
-                self.efficiency_source_label.setText(f"Logged Data (Avg. {adjusted_wh_per_mile:.2f} Wh/mile)")
+                self.efficiency_source_label.setText("Logged") # More concise
             else:
                 # Calculate Adjusted Wh/mile based on Wheel Diameter and Driving Style (Predicted)
                 interpolation_factor = (wheel_diameter - self.SMALL_WHEEL_REF) / (self.LARGE_WHEEL_REF - self.SMALL_WHEEL_REF)
@@ -1203,8 +1251,9 @@ class BatteryCalculatorGUI(QWidget):
                 base_wh_per_mile_large = self.LARGE_WHEEL_EFFICIENCY.get(driving_style)
 
                 if base_wh_per_mile_small is None or base_wh_per_mile_large is None:
-                    QMessageBox.critical(self, "Error", "Invalid driving style selected for efficiency lookup in range calculation.")
-                    self.efficiency_source_label.setText("Error: Invalid Driving Style")
+                    if not self.is_initializing: # Suppress during initialization
+                        QMessageBox.critical(self, "Error", "Invalid driving style selected for efficiency lookup in range calculation.")
+                    self.efficiency_source_label.setText("Error")
                     return
 
                 adjusted_wh_per_mile = (base_wh_per_mile_small * (1 - interpolation_factor) +
@@ -1213,8 +1262,9 @@ class BatteryCalculatorGUI(QWidget):
 
 
             if adjusted_wh_per_mile <= 0:
-                QMessageBox.critical(self, "Error", "Calculated efficiency (Wh/mile) must be greater than zero for range calculation.")
-                self.efficiency_source_label.setText("Error: Zero Efficiency")
+                if not self.is_initializing: # Suppress during initialization
+                    QMessageBox.critical(self, "Error", "Calculated efficiency (Wh/mile) must be greater than zero for range calculation.")
+                self.efficiency_source_label.setText("Error")
                 return
 
             estimated_range = total_energy_wh / adjusted_wh_per_mile
@@ -1233,14 +1283,17 @@ class BatteryCalculatorGUI(QWidget):
             self.range_unit = calculated_unit
 
         except ValueError:
-            QMessageBox.critical(self, "Input Error", "Invalid numeric input for battery/bike information (e.g., Voltage, Capacity, Wheel Diameter) for range calculation.")
-            self.efficiency_source_label.setText("Error: Invalid Numeric Input")
+            if not self.is_initializing: # Suppress during initialization
+                pass # Suppress repetitive message
+            self.efficiency_source_label.setText("Error")
         except ZeroDivisionError:
-            QMessageBox.critical(self, "Error", "Division by zero in range calculation. Check Voltage, Capacity, Wheel Diameter, or efficiency values.")
-            self.efficiency_source_label.setText("Error: Division by Zero")
+            if not self.is_initializing: # Suppress during initialization
+                pass # Suppress repetitive message
+            self.efficiency_source_label.setText("Error")
         except Exception as e: # Catch any other unexpected errors
-            QMessageBox.critical(self, "Internal Error", f"An unexpected error occurred during range calculation: {e}")
-            self.efficiency_source_label.setText("Error: Internal Issue")
+            if not self.is_initializing: # Suppress during initialization
+                QMessageBox.critical(self, "Internal Error", f"An unexpected error occurred during range calculation: {e}")
+            self.efficiency_source_label.setText("Error")
 
     def calculate_charge_time_and_remaining_range(self):
         """Calculates and displays remaining charge, range, and estimated time to full charge."""
@@ -1253,7 +1306,8 @@ class BatteryCalculatorGUI(QWidget):
         
         # Display warning if current battery state is invalid, then return from this function only
         if current_percentage is None:
-            QMessageBox.warning(self, "Input Warning", "Cannot calculate remaining charge/range or charge time due to invalid current battery state (percentage/voltage) or invalid battery info (voltage/series cells).")
+            if not self.is_initializing: # Suppress during initialization
+                pass # Suppress repetitive message
             return
 
         try:
@@ -1268,7 +1322,8 @@ class BatteryCalculatorGUI(QWidget):
             
             # Check for invalid primary inputs that can prevent this entire calculation
             if nominal_voltage <= 0 or capacity <= 0 or charge_rate <= 0:
-                QMessageBox.warning(self, "Input Error", "Nominal voltage, battery capacity, and charger rate must be positive for charge time and remaining range calculations.")
+                if not self.is_initializing: # Suppress during initialization
+                    pass # Suppress repetitive message
                 return
 
             capacity_ah = 0
@@ -1279,7 +1334,8 @@ class BatteryCalculatorGUI(QWidget):
 
             # Ensure capacity_ah is valid before proceeding
             if capacity_ah <= 0:
-                QMessageBox.warning(self, "Calculation Error", "Calculated battery capacity (Ah) is zero or negative. Check voltage and Wh/Ah inputs for charge time calculation.")
+                if not self.is_initializing: # Suppress during initialization
+                    pass # Suppress repetitive message
                 return
 
             remaining_capacity_ah_to_full = capacity_ah * (1 - (current_percentage / 100))
@@ -1296,11 +1352,14 @@ class BatteryCalculatorGUI(QWidget):
                 self.remaining_range_label.setText("N/A (Full charge range not available or zero)")
 
         except ValueError:
-            QMessageBox.critical(self, "Input Error", "Invalid numeric input for charging information (e.g., Charger Rate) or battery info.")
+            if not self.is_initializing: # Suppress during initialization
+                pass # Suppress repetitive message
         except ZeroDivisionError:
-            QMessageBox.critical(self, "Error", "Division by zero in charge time calculation. Check Nominal Voltage, Capacity, or Charge Rate.")
+            if not self.is_initializing: # Suppress during initialization
+                pass # Suppress repetitive message
         except Exception as e:
-            QMessageBox.critical(self, "Internal Error", f"An unexpected error occurred during charge time calculation: {e}")
+            if not self.is_initializing: # Suppress during initialization
+                QMessageBox.critical(self, "Internal Error", f"An unexpected error occurred during charge time calculation: {e}")
 
     def clear_fields(self, keep_profile_name=False):
         """Clears all input fields, and output labels.
@@ -1315,6 +1374,7 @@ class BatteryCalculatorGUI(QWidget):
         self.current_voltage_entry.clear()
         self.motor_wattage_entry.clear()
         self.wheel_diameter_entry.clear()
+        self.preferred_cutoff_entry.setText("25") # NEW: Reset cutoff to default
         
         # Reset comboboxes and radiobuttons to default values
         self.capacity_type_combo.setCurrentText("Wh")
@@ -1334,6 +1394,9 @@ class BatteryCalculatorGUI(QWidget):
         self.miles_per_wh_label.setText("")
         self.miles_per_ah_label.setText("")
         self.percentage_after_charge_label.setText("")
+        self.range_to_cutoff_label.setText("") # NEW: Clear cutoff labels
+        self.charge_time_from_cutoff_label.setText("") # NEW: Clear cutoff labels
+
         self.breakdown_voltage_label.setText("")
         self.breakdown_series_cells_label.setText("")
         self.breakdown_min_max_voltage_label.setText("")
@@ -1345,8 +1408,10 @@ class BatteryCalculatorGUI(QWidget):
         self.breakdown_charge_duration_label.setText("")
         self.breakdown_current_state_percent_label.setText("")
         self.breakdown_current_state_voltage_label.setText("")
+        self.breakdown_preferred_cutoff_label.setText("") # NEW: Clear breakdown cutoff
+        self.breakdown_preferred_cutoff_voltage_label.setText("") # NEW: Clear breakdown cutoff voltage
         self.efficiency_source_label.setText("Predicted") # Reset efficiency source
-        self.reset_efficiency_source() # Reset the internal flag too
+        self.reset_efficiency_source(show_message=False) # Reset the internal flag too, without a message
         
         # Clear ride log fields and table on the ride log tab as well
         self.clear_ride_log_fields()
@@ -1368,6 +1433,8 @@ class BatteryCalculatorGUI(QWidget):
         breakdown_text += f"Charge Duration: {self.breakdown_charge_duration_label.text()}\n"
         breakdown_text += f"Current State %: {self.breakdown_current_state_percent_label.text()}\n"
         breakdown_text += f"Current State V: {self.breakdown_current_state_voltage_label.text()}\n"
+        breakdown_text += f"Preferred Cutoff %: {self.breakdown_preferred_cutoff_label.text()}\n" # NEW: Add cutoff to export
+        breakdown_text += f"Preferred Cutoff V: {self.breakdown_preferred_cutoff_voltage_label.text()}\n" # NEW: Add cutoff voltage to export
         breakdown_text += f"Efficiency Source: {self.efficiency_source_label.text()}\n" # Include efficiency source
 
         file_path, _ = QFileDialog.getSaveFileName(
@@ -1594,13 +1661,15 @@ class BatteryCalculatorGUI(QWidget):
             self.use_logged_efficiency = False
             self.efficiency_source_label.setText("Predicted") # Ensure label reflects this
 
-    def reset_efficiency_source(self):
-        """Resets the calculator to use predicted efficiency (based on driving style/wheel diameter)."""
+    def reset_efficiency_source(self, show_message=True):
+        """Resets the calculator to use predicted efficiency (based on driving style/wheel diameter).
+           'show_message' controls whether a QMessageBox is displayed."""
         self.use_logged_efficiency = False
         self.logged_wh_per_mile_average = 0.0
         self.efficiency_source_label.setText("Predicted")
         self.calculate_all() # Recalculate range with predicted efficiency
-        QMessageBox.information(self, "Efficiency Reset", "Calculator is now using predicted efficiency based on driving style.")
+        if show_message:
+            QMessageBox.information(self, "Efficiency Reset", "Calculator is now using predicted efficiency based on driving style.")
 
 
 if __name__ == "__main__":
