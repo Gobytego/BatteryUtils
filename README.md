@@ -3,11 +3,17 @@
 Updated 06/19/2025
 
 A set of Battery tools for e-bikes/scooters This includes: 
+
 Battery range Calculator to get a estimate of how many miles you can ride on the remaining charge you have left on your battery. 
+
 Battery Charge time calculator to estimate how long it will take to get a charge to 100% battery from your charger. 
+
 There is also a "Ride Log" which you can enter in your rides and it will make the calculations more accurate to your riding behavior. 
+
 a bunch more to come...
+
 "batteryutils.py" is the code
+
 "batteryutils" is the standalone binary
 
 <img align="center" width="500" src="https://github.com/Gobytego/BatteryUtils/blob/main/screenshot1.png">
