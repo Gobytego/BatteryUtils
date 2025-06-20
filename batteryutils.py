@@ -1,12 +1,18 @@
-import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
+import sys
 import json
 import os
-import sys
+from datetime import datetime
+from PyQt6.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
+    QLabel, QLineEdit, QPushButton, QComboBox, QMessageBox,
+    QTextEdit, QRadioButton, QFrame, QGroupBox, QInputDialog, QFileDialog, QButtonGroup,
+    QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView, QDateTimeEdit
+)
+from PyQt6.QtCore import Qt, QTimer, QDateTime
 
 SETTINGS_FILE = "battery_calculator_settings.json"
 
-class BatteryCalculatorGUI:
+class BatteryCalculatorGUI(QWidget):
     # Universal cell voltage properties for typical Li-ion e-bike batteries
     CELL_VOLTAGE_FULL = 4.2  # Volts per cell at 100% charge
     CELL_VOLTAGE_EMPTY = 3.0 # Volts per cell at 0% charge
@@ -39,227 +45,531 @@ class BatteryCalculatorGUI:
         "Agressive": 80.0   # Scaled up consistently for larger wheels, more power (kept original)
     }
 
-    MAX_PROFILES = 3 # Maximum number of profiles allowed
+    MAX_PROFILES = 10 # Maximum number of profiles allowed (Increased from 3 to 10)
 
-    def __init__(self, master):
-        self.master = master
-        master.title("Battery Calculator")
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Battery Calculator")
+        self.setGeometry(100, 100, 950, 750) # x, y, width, height for the window, adjusted for tabs
 
         # Store all profiles loaded from the settings file
         self.all_profiles = {}
         # Stores the name of the currently active profile
-        self.current_profile_name = tk.StringVar(value="Default Profile")
+        self.current_profile_name = "Default Profile"
 
-        # --- Main Layout Frames ---
-        self.input_frame = ttk.Frame(master)
-        self.input_frame.grid(row=0, column=0, padx=10, pady=10, sticky="new")
+        # New variables for logged efficiency override
+        self.use_logged_efficiency = False
+        self.logged_wh_per_mile_average = 0.0
 
-        self.results_frame = ttk.Frame(master)
-        self.results_frame.grid(row=0, column=1, padx=10, pady=10, sticky="new")
+        # New flag to suppress QMessageBox during initial load
+        self.is_initializing = True 
 
-        # --- Profile Management Section ---
-        self.profile_frame = ttk.LabelFrame(self.input_frame, text="--- Profile Management ---")
-        self.profile_frame.grid(row=0, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
+        self.init_ui()
 
-        ttk.Label(self.profile_frame, text="Select Profile:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
-        self.profile_combo = ttk.Combobox(self.profile_frame, textvariable=self.current_profile_name, width=20, state="readonly")
-        self.profile_combo.grid(row=0, column=1, sticky="ew", padx=5, pady=5)
-        self.profile_combo.bind("<<ComboboxSelected>>", self.on_profile_selection)
-        
-        self.load_all_profiles() # Load all profiles from file initially
-        # Initialize profile combo with current profiles (moved after self.profile_combo creation)
+        # Load all profiles and then initialize the combo box
+        self.load_all_profiles()
         self.update_profile_combo()
+        # Load data for the initial profile (either last active or default)
+        self.load_profile_data(self.current_profile_name)
 
-        self.profile_buttons_frame = ttk.Frame(self.profile_frame)
-        self.profile_buttons_frame.grid(row=1, column=0, columnspan=2, pady=5)
+        # Set initialization flag to False after all initial loading is complete
+        self.is_initializing = False
 
-        ttk.Button(self.profile_buttons_frame, text="New", command=self.create_new_profile).pack(side=tk.LEFT, padx=2)
-        ttk.Button(self.profile_buttons_frame, text="Save", command=self.save_current_profile).pack(side=tk.LEFT, padx=2)
-        ttk.Button(self.profile_buttons_frame, text="Load", command=lambda: self.load_profile_data(self.current_profile_name.get())).pack(side=tk.LEFT, padx=2)
-        ttk.Button(self.profile_buttons_frame, text="Delete", command=self.delete_selected_profile).pack(side=tk.LEFT, padx=2)
+    def init_ui(self):
+        # Main Layout for the entire window
+        main_v_layout = QVBoxLayout(self) # Top-level layout is vertical to hold tabs
+
+        self.tab_widget = QTabWidget()
+        main_v_layout.addWidget(self.tab_widget)
+
+        # --- Tab 1: Battery Calculator (Existing content) ---
+        self.calculator_tab = QWidget()
+        calculator_tab_layout = QHBoxLayout(self.calculator_tab) # Horizontal layout within the calculator tab
+
+        # Input Section Frame (moved inside calculator_tab)
+        self.input_frame = QFrame(self.calculator_tab)
+        self.input_layout = QGridLayout(self.input_frame)
+        self.input_frame.setLayout(self.input_layout)
+        self.input_frame.setFrameShape(QFrame.Shape.StyledPanel)
+        self.input_frame.setFrameShadow(QFrame.Shadow.Raised)
+
+        # Results Section Frame (moved inside calculator_tab)
+        self.results_frame = QFrame(self.calculator_tab)
+        self.results_layout = QGridLayout(self.results_frame)
+        self.results_frame.setLayout(self.results_layout)
+        self.results_frame.setFrameShape(QFrame.Shape.StyledPanel)
+        self.results_frame.setFrameShadow(QFrame.Shadow.Raised)
+
+        calculator_tab_layout.addWidget(self.input_frame, 1) # Stretch factor 1
+        calculator_tab_layout.addWidget(self.results_frame, 1) # Stretch factor 1
+        self.tab_widget.addTab(self.calculator_tab, "Battery Calculator")
+
+        # --- Tab 2: Ride Log ---
+        self.ride_log_tab = QWidget()
+        self.ride_log_main_layout = QVBoxLayout(self.ride_log_tab)
+        self.init_ride_log_ui() # Call method to build ride log UI
+        self.tab_widget.addTab(self.ride_log_tab, "Ride Log")
+
+        # --- Profile Management Section (moved into input_frame) ---
+        self.profile_group_box = QGroupBox("--- Profile Management ---")
+        self.profile_layout = QGridLayout(self.profile_group_box)
+
+        self.profile_layout.addWidget(QLabel("Select Profile:"), 0, 0)
+        self.profile_combo = QComboBox()
+        self.profile_layout.addWidget(self.profile_combo, 0, 1, 1, 2) # Span 2 columns
+        self.profile_combo.currentTextChanged.connect(self.on_profile_selection)
+
+        self.profile_buttons_layout = QHBoxLayout()
+        self.btn_new_profile = QPushButton("New")
+        self.btn_save_profile = QPushButton("Save")
+        self.btn_load_profile = QPushButton("Load")
+        self.btn_delete_profile = QPushButton("Delete")
+
+        self.btn_new_profile.clicked.connect(self.create_new_profile)
+        self.btn_save_profile.clicked.connect(self.save_current_profile)
+        self.btn_load_profile.clicked.connect(lambda: self.load_profile_data(self.profile_combo.currentText()))
+        self.btn_delete_profile.clicked.connect(self.delete_selected_profile)
+
+        self.profile_buttons_layout.addWidget(self.btn_new_profile)
+        self.profile_buttons_layout.addWidget(self.btn_save_profile)
+        self.profile_buttons_layout.addWidget(self.btn_load_profile)
+        self.profile_buttons_layout.addWidget(self.btn_delete_profile)
+        self.profile_layout.addLayout(self.profile_buttons_layout, 1, 0, 1, 3) # Span 3 columns
+
+        self.input_layout.addWidget(self.profile_group_box, 0, 0, 1, 2) # Add profile box to input frame, span 2 columns
 
         # --- Battery Information ---
-        ttk.Label(self.input_frame, text="--- Battery Info ---").grid(row=1, column=0, columnspan=2, pady=5) # Row shifted
-        ttk.Label(self.input_frame, text="Nominal Voltage (V):").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5) # Row shifted
-        self.voltage_entry = ttk.Entry(self.input_frame, width=15)
-        self.voltage_entry.grid(row=2, column=1, sticky=tk.E, padx=5, pady=5)
-        self.voltage_entry.bind("<FocusOut>", self.update_voltage_info_labels)
-        self.voltage_entry.bind("<KeyRelease>", self.update_voltage_info_labels) 
+        self.battery_info_group_box = QGroupBox("--- Battery Info ---")
+        self.battery_info_layout = QGridLayout(self.battery_info_group_box)
+
+        self.battery_info_layout.addWidget(QLabel("Nominal Voltage (V):"), 0, 0)
+        self.voltage_entry = QLineEdit()
+        self.voltage_entry.textChanged.connect(self.update_voltage_info_labels)
+        self.voltage_entry.setPlaceholderText("e.g., 48, 52")
+        self.battery_info_layout.addWidget(self.voltage_entry, 0, 1)
 
         # Cells in Series (S) - initially hidden, shown if nominal voltage is unknown
-        self.series_cells_label = ttk.Label(self.input_frame, text="Cells in Series (S):")
-        self.series_cells_entry = ttk.Entry(self.input_frame, width=15)
-        self.series_cells_entry.bind("<FocusOut>", self.update_voltage_info_labels)
-        self.series_cells_entry.bind("<KeyRelease>", self.update_voltage_info_labels)
+        self.series_cells_label = QLabel("Cells in Series (S):")
+        self.series_cells_entry = QLineEdit()
+        self.series_cells_entry.textChanged.connect(self.update_voltage_info_labels)
+        self.series_cells_entry.setPlaceholderText("e.g., 13, 14")
 
         # Info labels for min/max voltage based on series cells
-        self.max_voltage_info_label = ttk.Label(self.input_frame, text="Full Charge V: N/A")
-        self.max_voltage_info_label.grid(row=4, column=0, sticky=tk.W, padx=5, pady=2) # Row shifted
-        self.min_voltage_info_label = ttk.Label(self.input_frame, text="Empty V: N/A")
-        self.min_voltage_info_label.grid(row=5, column=0, sticky=tk.W, padx=5, pady=2) # Row shifted
-        
+        self.max_voltage_info_label = QLabel("Full Charge V: N/A")
+        self.battery_info_layout.addWidget(self.max_voltage_info_label, 2, 0, 1, 2)
+        self.min_voltage_info_label = QLabel("Empty V: N/A")
+        self.battery_info_layout.addWidget(self.min_voltage_info_label, 3, 0, 1, 2)
+
         # Initial call to set visibility and labels
         self.update_voltage_info_labels()
 
-        ttk.Label(self.input_frame, text="Capacity Type:").grid(row=6, column=0, sticky=tk.W, padx=5, pady=5) # Row shifted
-        self.capacity_type_combo = ttk.Combobox(self.input_frame, values=["Wh", "Ah"], width=13)
-        self.capacity_type_combo.grid(row=6, column=1, sticky=tk.E, padx=5, pady=5) # Row shifted
-        self.capacity_type_combo.set("Wh") # Default for new profiles
-        self.capacity_type_combo.bind("<<ComboboxSelected>>", self.update_capacity_label)
+        self.battery_info_layout.addWidget(QLabel("Capacity Type:"), 4, 0)
+        self.capacity_type_combo = QComboBox()
+        self.capacity_type_combo.addItems(["Wh", "Ah"])
+        self.capacity_type_combo.currentTextChanged.connect(self.update_capacity_label)
+        self.capacity_type_combo.setCurrentText("Wh") # Default for new profiles
+        self.battery_info_layout.addWidget(self.capacity_type_combo, 4, 1)
 
-        self.capacity_label_text = tk.StringVar()
-        ttk.Label(self.input_frame, textvariable=self.capacity_label_text).grid(row=7, column=0, sticky=tk.W, padx=5, pady=5) # Row shifted
-        self.capacity_entry = ttk.Entry(self.input_frame, width=15)
-        self.capacity_entry.grid(row=7, column=1, sticky=tk.E, padx=5, pady=5) # Row shifted
-        self.update_capacity_label()
+        self.capacity_label = QLabel("Battery Capacity (Wh):") # Placeholder, text updated by update_capacity_label
+        self.battery_info_layout.addWidget(self.capacity_label, 5, 0)
+        self.capacity_entry = QLineEdit()
+        self.battery_info_layout.addWidget(self.capacity_entry, 5, 1)
+        self.update_capacity_label() # Initial call to set correct label
 
+        self.input_layout.addWidget(self.battery_info_group_box, 1, 0, 1, 2)
 
         # --- Charging Information ---
-        ttk.Label(self.input_frame, text="--- Charging ---").grid(row=8, column=0, columnspan=2, pady=5) # Row shifted
-        ttk.Label(self.input_frame, text="Charger Rate (A):").grid(row=9, column=0, sticky=tk.W, padx=5, pady=5) # Row shifted
-        self.charge_rate_entry = ttk.Entry(self.input_frame, width=15)
-        self.charge_rate_entry.grid(row=9, column=1, sticky=tk.E, padx=5, pady=5) # Row shifted
+        self.charging_group_box = QGroupBox("--- Charging ---")
+        self.charging_layout = QGridLayout(self.charging_group_box)
 
-        # --- Current Battery State Input Choice ---
-        self.charge_input_method = tk.StringVar(value="percentage") # Default for new profiles
+        self.charging_layout.addWidget(QLabel("Charger Rate (A):"), 0, 0)
+        self.charge_rate_entry = QLineEdit()
+        self.charging_layout.addWidget(self.charge_rate_entry, 0, 1)
 
-        self.radio_frame = ttk.Frame(self.input_frame)
-        self.radio_frame.grid(row=10, column=0, columnspan=2, pady=5) # Row shifted
+        self.charging_layout.addWidget(QLabel("Charge Duration (hours):"), 1, 0)
+        self.charging_duration_combo = QComboBox()
+        self.charging_duration_combo.addItems([""] + [f"{i*0.5:.1f} hours" for i in range(1, 25)]) # 0.5 to 12.0 hours
+        self.charging_layout.addWidget(self.charging_duration_combo, 1, 1)
+        self.charging_duration_combo.setCurrentText("") # No default selected
 
-        self.percent_radio = ttk.Radiobutton(self.radio_frame, text="Current Percentage (%)", variable=self.charge_input_method, value="percentage", command=self.toggle_charge_input)
-        self.percent_radio.pack(side=tk.LEFT, padx=5)
+        # Current Battery State Input Choice
+        self.charge_input_method_group = QButtonGroup(self) # Group for radio buttons
+        self.percent_radio = QRadioButton("Current Percentage (%)")
+        self.voltage_radio = QRadioButton("Current Voltage (V)")
+        self.charge_input_method_group.addButton(self.percent_radio, 0) # ID 0 for percentage
+        self.charge_input_method_group.addButton(self.voltage_radio, 1) # ID 1 for voltage
 
-        self.voltage_radio = ttk.Radiobutton(self.radio_frame, text="Current Voltage (V)", variable=self.charge_input_method, value="voltage", command=self.toggle_charge_input)
-        self.voltage_radio.pack(side=tk.LEFT, padx=5)
+        self.percent_radio.toggled.connect(self.toggle_charge_input)
+        self.voltage_radio.toggled.connect(self.toggle_charge_input)
 
-        self.current_percentage_label = ttk.Label(self.input_frame, text="Current Percentage (%):")
-        self.current_percentage_label.grid(row=11, column=0, sticky=tk.W, padx=5, pady=5) # Row shifted
-        self.current_percentage_entry = ttk.Entry(self.input_frame, width=15)
-        self.current_percentage_entry.grid(row=11, column=1, sticky=tk.E, padx=5, pady=5) # Row shifted
-        self.current_percentage_entry.insert(0, "0")
+        radio_h_layout = QHBoxLayout()
+        radio_h_layout.addWidget(self.percent_radio)
+        radio_h_layout.addWidget(self.voltage_radio)
+        self.charging_layout.addLayout(radio_h_layout, 2, 0, 1, 2)
 
-        self.current_voltage_label = ttk.Label(self.input_frame, text="Current Voltage (V):")
-        self.current_voltage_entry = ttk.Entry(self.input_frame, width=15)
-        self.current_voltage_entry.insert(0, "")
+        self.current_percentage_label = QLabel("Current Percentage (%):")
+        self.current_percentage_entry = QLineEdit("0")
+        self.charging_layout.addWidget(self.current_percentage_label, 3, 0)
+        self.charging_layout.addWidget(self.current_percentage_entry, 3, 1)
 
-        self.toggle_charge_input() # Call to set initial state based on default/loaded profile
+        self.current_voltage_label = QLabel("Current Voltage (V):")
+        self.current_voltage_entry = QLineEdit("")
+        # These will be added to layout in toggle_charge_input if voltage is selected
+
+        self.percent_radio.setChecked(True) # Default for new profiles
+
+        # NEW: Preferred Low Battery Cutoff
+        self.charging_layout.addWidget(QLabel("Preferred Cutoff (%):"), 4, 0)
+        self.preferred_cutoff_entry = QLineEdit("25") # Default to 25%
+        self.charging_layout.addWidget(self.preferred_cutoff_entry, 4, 1)
+
+
+        self.input_layout.addWidget(self.charging_group_box, 2, 0, 1, 2)
 
         # --- Motor and Bike Information ---
-        ttk.Label(self.input_frame, text="--- Motor/Bike Info ---").grid(row=12, column=0, columnspan=2, pady=5) # Row shifted
-        ttk.Label(self.input_frame, text="Motor Wattage (W):").grid(row=13, column=0, sticky=tk.W, padx=5, pady=5) # Row shifted
-        self.motor_wattage_entry = ttk.Entry(self.input_frame, width=15)
-        self.motor_wattage_entry.grid(row=13, column=1, sticky=tk.E, padx=5, pady=5) # Row shifted
+        self.motor_bike_group_box = QGroupBox("--- Motor/Bike Info ---")
+        self.motor_bike_layout = QGridLayout(self.motor_bike_group_box)
 
-        ttk.Label(self.input_frame, text="Wheel Diameter (in):").grid(row=14, column=0, sticky=tk.W, padx=5, pady=5) # Row shifted
-        self.wheel_diameter_entry = ttk.Entry(self.input_frame, width=15)
-        self.wheel_diameter_entry.grid(row=14, column=1, sticky=tk.E, padx=5, pady=5) # Row shifted
+        self.motor_bike_layout.addWidget(QLabel("Motor Wattage (W):"), 0, 0)
+        self.motor_wattage_entry = QLineEdit()
+        self.motor_bike_layout.addWidget(self.motor_wattage_entry, 0, 1)
 
-        ttk.Label(self.input_frame, text="Driving Style:").grid(row=15, column=0, sticky=tk.W, padx=5, pady=5) # Row shifted
-        self.driving_style_combo = ttk.Combobox(self.input_frame, values=["Agressive", "Casual", "Eco"], width=13)
-        self.driving_style_combo.grid(row=15, column=1, sticky=tk.E, padx=5, pady=5) # Row shifted
-        self.driving_style_combo.set("Casual") # Default for new profiles
+        self.motor_bike_layout.addWidget(QLabel("Wheel Diameter (in):"), 1, 0)
+        self.wheel_diameter_entry = QLineEdit()
+        self.motor_bike_layout.addWidget(self.wheel_diameter_entry, 1, 1)
+
+        self.motor_bike_layout.addWidget(QLabel("Driving Style:"), 2, 0)
+        self.driving_style_combo = QComboBox()
+        self.driving_style_combo.addItems(["Agressive", "Casual", "Eco"])
+        self.driving_style_combo.setCurrentText("Casual") # Default for new profiles
+        self.motor_bike_layout.addWidget(self.driving_style_combo, 2, 1)
+
+        self.input_layout.addWidget(self.motor_bike_group_box, 3, 0, 1, 2)
 
         # --- Buttons ---
-        calculate_button = ttk.Button(self.input_frame, text="Calculate", command=self.calculate_all)
-        calculate_button.grid(row=16, column=0, columnspan=2, pady=10) # Row shifted
+        self.buttons_h_layout = QHBoxLayout()
+        calculate_button = QPushButton("Calculate")
+        calculate_button.clicked.connect(self.calculate_all)
+        calculate_button.setStyleSheet(
+            "QPushButton {"
+            "   background-color: #4CAF50; /* Green */"
+            "   color: white;"
+            "   padding: 10px 20px;"
+            "   border-radius: 8px;"
+            "   font-size: 16px;"
+            "   font-weight: bold;"
+            "   border: none;"
+            "}"
+            "QPushButton:hover {"
+            "   background-color: #45a049;"
+            "}"
+            "QPushButton:pressed {"
+            "   background-color: #3e8e41;"
+            "}"
+        )
+        self.buttons_h_layout.addWidget(calculate_button)
 
-        # Clear button now only clears fields, not profile.
-        self.clear_button = ttk.Button(self.input_frame, text="Clear Fields", command=self.clear_fields)
-        self.clear_button.grid(row=17, column=0, columnspan=2, pady=5) # Row shifted
+        self.clear_button = QPushButton("Clear Fields")
+        self.clear_button.clicked.connect(self.clear_fields)
+        self.buttons_h_layout.addWidget(self.clear_button)
 
-        # --- Output Labels (Results and Breakdown) ---
-        ttk.Label(self.results_frame, text="--- Results ---").grid(row=0, column=0, columnspan=2, pady=10)
-        ttk.Label(self.results_frame, text="Estimated Range:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
-        self.calculated_range_label = ttk.Label(self.results_frame, text="")
-        self.calculated_range_label.grid(row=1, column=1, sticky=tk.E, padx=5, pady=5)
-        self.calculated_range_unit_label = ttk.Label(self.results_frame, text="miles")
+        self.export_breakdown_button = QPushButton("Export Breakdown")
+        self.export_breakdown_button.clicked.connect(self.export_breakdown_to_file)
+        self.buttons_h_layout.addWidget(self.export_breakdown_button)
 
-        ttk.Label(self.results_frame, text="Remaining Range:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
-        self.remaining_range_label = ttk.Label(self.results_frame, text="")
-        self.remaining_range_label.grid(row=2, column=1, sticky=tk.E, padx=5, pady=5)
-        self.remaining_range_unit_label = ttk.Label(self.results_frame, text="miles")
+        self.input_layout.addLayout(self.buttons_h_layout, 4, 0, 1, 2)
 
-        ttk.Label(self.results_frame, text="Remaining Charge %:").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
-        self.remaining_charge_percentage_label = ttk.Label(self.results_frame, text="")
-        self.remaining_charge_percentage_label.grid(row=3, column=1, sticky=tk.E, padx=5, pady=5)
 
-        ttk.Label(self.results_frame, text="Estimated Charge Time:").grid(row=4, column=0, sticky=tk.W, padx=5, pady=5)
-        self.charge_time_label = ttk.Label(self.results_frame, text="")
-        self.charge_time_label.grid(row=4, column=1, sticky=tk.E, padx=5, pady=5)
-        ttk.Label(self.results_frame, text="hours").grid(row=4, column=2, sticky=tk.W)
+        # --- Output Labels (Results) ---
+        self.results_group_box = QGroupBox("--- Results ---")
+        self.results_group_layout = QGridLayout(self.results_group_box)
 
-        ttk.Label(self.results_frame, text="Miles/Wh (Adjusted):").grid(row=5, column=0, sticky=tk.W, padx=5, pady=5)
-        self.miles_per_wh_label = ttk.Label(self.results_frame, text="")
-        self.miles_per_wh_label.grid(row=5, column=1, sticky=tk.E, padx=5, pady=5)
+        self.results_group_layout.addWidget(QLabel("Estimated Range (100%):"), 0, 0)
+        self.calculated_range_label = QLabel("")
+        self.results_group_layout.addWidget(self.calculated_range_label, 0, 1)
+        self.calculated_range_unit_label = QLabel("miles")
+        self.results_group_layout.addWidget(self.calculated_range_unit_label, 0, 2)
 
-        ttk.Label(self.results_frame, text="Miles/Ah (Adjusted):").grid(row=6, column=0, sticky=tk.W, padx=5, pady=5)
-        self.miles_per_ah_label = ttk.Label(self.results_frame, text="")
-        self.miles_per_ah_label.grid(row=6, column=1, sticky=tk.E, padx=5, pady=5)
+        self.results_group_layout.addWidget(QLabel("Remaining Range (to 0%):"), 1, 0)
+        self.remaining_range_label = QLabel("")
+        self.results_group_layout.addWidget(self.remaining_range_label, 1, 1)
+        self.remaining_range_unit_label = QLabel("miles")
+        self.results_group_layout.addWidget(self.remaining_range_unit_label, 1, 2)
+
+        self.results_group_layout.addWidget(QLabel("Remaining Charge (% to 0%):"), 2, 0)
+        self.remaining_charge_percentage_label = QLabel("")
+        self.results_group_layout.addWidget(self.remaining_charge_percentage_label, 2, 1)
+
+        self.results_group_layout.addWidget(QLabel("Percentage after Charge:"), 3, 0)
+        self.percentage_after_charge_label = QLabel("")
+        self.results_group_layout.addWidget(self.percentage_after_charge_label, 3, 1)
+
+        self.results_group_layout.addWidget(QLabel("Estimated Charge Time (to 100%):"), 4, 0)
+        self.charge_time_label = QLabel("")
+        self.results_group_layout.addWidget(self.charge_time_label, 4, 1)
+        self.results_group_layout.addWidget(QLabel("hours"), 4, 2)
+        
+        # NEW: Range to Preferred Cutoff
+        self.results_group_layout.addWidget(QLabel("Range to Cutoff:"), 5, 0)
+        self.range_to_cutoff_label = QLabel("")
+        self.results_group_layout.addWidget(self.range_to_cutoff_label, 5, 1)
+        self.results_group_layout.addWidget(QLabel("miles"), 5, 2)
+
+        # NEW: Charge Time from Preferred Cutoff
+        self.results_group_layout.addWidget(QLabel("Charge Time from Cutoff:"), 6, 0)
+        self.charge_time_from_cutoff_label = QLabel("")
+        self.results_group_layout.addWidget(self.charge_time_from_cutoff_label, 6, 1)
+        self.results_group_layout.addWidget(QLabel("hours"), 6, 2)
+
+        self.results_group_layout.addWidget(QLabel("Miles/Wh (Adjusted):"), 7, 0)
+        self.miles_per_wh_label = QLabel("")
+        self.results_group_layout.addWidget(self.miles_per_wh_label, 7, 1)
+
+        self.results_group_layout.addWidget(QLabel("Miles/Ah (Adjusted):"), 8, 0)
+        self.miles_per_ah_label = QLabel("")
+        self.results_group_layout.addWidget(self.miles_per_ah_label, 8, 1)
+
+        # New: Efficiency Source Indicator
+        self.results_group_layout.addWidget(QLabel("Efficiency Source:"), 9, 0)
+        self.efficiency_source_label = QLabel("Predicted")
+        self.efficiency_source_label.setStyleSheet("font-style: italic; color: #555;")
+        self.results_group_layout.addWidget(self.efficiency_source_label, 9, 1, 1, 2)
+
+        # New: Reset Efficiency Button
+        self.reset_efficiency_button = QPushButton("Reset Efficiency")
+        self.reset_efficiency_button.clicked.connect(self.reset_efficiency_source)
+        self.reset_efficiency_button.setStyleSheet(
+            "QPushButton {"
+            "   background-color: #f0ad4e; /* Orange */"
+            "   color: white;"
+            "   padding: 5px 10px;"
+            "   border-radius: 5px;"
+            "   font-size: 12px;"
+            "   border: none;"
+            "}"
+            "QPushButton:hover {"
+            "   background-color: #ec971f;"
+            "}"
+        )
+        self.results_group_layout.addWidget(self.reset_efficiency_button, 10, 0, 1, 3, Qt.AlignmentFlag.AlignRight)
+
+
+        self.results_layout.addWidget(self.results_group_box, 0, 0, 1, 2)
+
 
         # --- Breakdown Column ---
-        ttk.Label(self.results_frame, text="--- Breakdown ---").grid(row=7, column=0, columnspan=2, pady=10)
-        ttk.Label(self.results_frame, text="Nominal Voltage:").grid(row=8, column=0, sticky=tk.W, padx=5)
-        self.breakdown_voltage_label = ttk.Label(self.results_frame, text="")
-        self.breakdown_voltage_label.grid(row=8, column=1, sticky=tk.E, padx=5)
+        self.breakdown_group_box = QGroupBox("--- Breakdown ---")
+        self.breakdown_group_layout = QGridLayout(self.breakdown_group_box)
 
-        ttk.Label(self.results_frame, text="Cells in Series (S):").grid(row=9, column=0, sticky=tk.W, padx=5)
-        self.breakdown_series_cells_label = ttk.Label(self.results_frame, text="")
-        self.breakdown_series_cells_label.grid(row=9, column=1, sticky=tk.E, padx=5)
+        self.breakdown_group_layout.addWidget(QLabel("Nominal Voltage:"), 0, 0)
+        self.breakdown_voltage_label = QLabel("")
+        self.breakdown_group_layout.addWidget(self.breakdown_voltage_label, 0, 1)
 
-        ttk.Label(self.results_frame, text="Min/Max Voltage (Calculated):").grid(row=10, column=0, sticky=tk.W, padx=5)
-        self.breakdown_min_max_voltage_label = ttk.Label(self.results_frame, text="")
-        self.breakdown_min_max_voltage_label.grid(row=10, column=1, sticky=tk.E, padx=5)
+        self.breakdown_group_layout.addWidget(QLabel("Cells in Series (S):"), 1, 0)
+        self.breakdown_series_cells_label = QLabel("")
+        self.breakdown_group_layout.addWidget(self.breakdown_series_cells_label, 1, 1)
 
-        ttk.Label(self.results_frame, text="Ah:").grid(row=11, column=0, sticky=tk.W, padx=5)
-        self.breakdown_ah_label = ttk.Label(self.results_frame, text="")
-        self.breakdown_ah_label.grid(row=11, column=1, sticky=tk.E, padx=5)
+        self.breakdown_group_layout.addWidget(QLabel("Min/Max Voltage (Calculated):"), 2, 0)
+        self.breakdown_min_max_voltage_label = QLabel("")
+        self.breakdown_group_layout.addWidget(self.breakdown_min_max_voltage_label, 2, 1)
 
-        ttk.Label(self.results_frame, text="Wh:").grid(row=12, column=0, sticky=tk.W, padx=5)
-        self.breakdown_wh_label = ttk.Label(self.results_frame, text="")
-        self.breakdown_wh_label.grid(row=12, column=1, sticky=tk.E, padx=5)
+        self.breakdown_group_layout.addWidget(QLabel("Ah:"), 3, 0)
+        self.breakdown_ah_label = QLabel("")
+        self.breakdown_group_layout.addWidget(self.breakdown_ah_label, 3, 1)
 
-        ttk.Label(self.results_frame, text="Motor Watts:").grid(row=13, column=0, sticky=tk.W, padx=5)
-        self.breakdown_motor_watts_label = ttk.Label(self.results_frame, text="")
-        self.breakdown_motor_watts_label.grid(row=13, column=1, sticky=tk.E, padx=5)
+        self.breakdown_group_layout.addWidget(QLabel("Wh:"), 4, 0)
+        self.breakdown_wh_label = QLabel("")
+        self.breakdown_group_layout.addWidget(self.breakdown_wh_label, 4, 1)
+
+        self.breakdown_group_layout.addWidget(QLabel("Motor Watts:"), 5, 0)
+        self.breakdown_motor_watts_label = QLabel("")
+        self.breakdown_group_layout.addWidget(self.breakdown_motor_watts_label, 5, 1)
+
+        self.breakdown_group_layout.addWidget(QLabel("Wheel Diameter:"), 6, 0)
+        self.breakdown_wheel_diameter_label = QLabel("")
+        self.breakdown_group_layout.addWidget(self.breakdown_wheel_diameter_label, 6, 1)
+
+        self.breakdown_group_layout.addWidget(QLabel("Charge Rate:"), 7, 0)
+        self.breakdown_charge_rate_label = QLabel("")
+        self.breakdown_group_layout.addWidget(self.breakdown_charge_rate_label, 7, 1)
+
+        self.breakdown_group_layout.addWidget(QLabel("Charge Duration:"), 8, 0)
+        self.breakdown_charge_duration_label = QLabel("")
+        self.breakdown_group_layout.addWidget(self.breakdown_charge_duration_label, 8, 1)
+
+        self.breakdown_group_layout.addWidget(QLabel("Current State %:"), 9, 0)
+        self.breakdown_current_state_percent_label = QLabel("")
+        self.breakdown_group_layout.addWidget(self.breakdown_current_state_percent_label, 9, 1)
+
+        self.breakdown_group_layout.addWidget(QLabel("Current State V:"), 10, 0)
+        self.breakdown_current_state_voltage_label = QLabel("")
+        self.breakdown_group_layout.addWidget(self.breakdown_current_state_voltage_label, 10, 1)
         
-        ttk.Label(self.results_frame, text="Wheel Diameter:").grid(row=14, column=0, sticky=tk.W, padx=5)
-        self.breakdown_wheel_diameter_label = ttk.Label(self.results_frame, text="")
-        self.breakdown_wheel_diameter_label.grid(row=14, column=1, sticky=tk.E, padx=5)
+        # NEW: Breakdown for Preferred Cutoff
+        self.breakdown_group_layout.addWidget(QLabel("Preferred Cutoff %:"), 11, 0)
+        self.breakdown_preferred_cutoff_label = QLabel("")
+        self.breakdown_group_layout.addWidget(self.breakdown_preferred_cutoff_label, 11, 1)
 
-        ttk.Label(self.results_frame, text="Charge Rate:").grid(row=15, column=0, sticky=tk.W, padx=5)
-        self.breakdown_charge_rate_label = ttk.Label(self.results_frame, text="")
-        self.breakdown_charge_rate_label.grid(row=15, column=1, sticky=tk.E, padx=5)
+        # NEW: Breakdown for Preferred Cutoff Voltage
+        self.breakdown_group_layout.addWidget(QLabel("Preferred Cutoff V:"), 12, 0) # New row for voltage
+        self.breakdown_preferred_cutoff_voltage_label = QLabel("")
+        self.breakdown_group_layout.addWidget(self.breakdown_preferred_cutoff_voltage_label, 12, 1)
 
-        ttk.Label(self.results_frame, text="Current State %:").grid(row=16, column=0, sticky=tk.W, padx=5)
-        self.breakdown_current_state_percent_label = ttk.Label(self.results_frame, text="")
-        self.breakdown_current_state_percent_label.grid(row=16, column=1, sticky=tk.E, padx=5)
 
-        ttk.Label(self.results_frame, text="Current State V:").grid(row=17, column=0, sticky=tk.W, padx=5)
-        self.breakdown_current_state_voltage_label = ttk.Label(self.results_frame, text="")
-        self.breakdown_current_state_voltage_label.grid(row=17, column=1, sticky=tk.E, padx=5)
-
-        # --- Emojis ---
-        emoji_label = ttk.Label(self.results_frame, text="🚲🔋🛴", font=("Arial", 30))
-        emoji_label.grid(row=18, column=0, columnspan=2, pady=10)
+        self.results_layout.addWidget(self.breakdown_group_box, 1, 0, 1, 2)
 
         # --- Attribution ---
-        attribution_label = ttk.Label(self.results_frame, text="Made by Adam of Gobytego", font=("Arial", 10, "italic"))
-        attribution_label.grid(row=19, column=0, columnspan=2, pady=5)
+        attribution_label = QLabel("Made by Adam of Gobytego")
+        attribution_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
+        attribution_label.setStyleSheet("font-style: italic; font-size: 10pt;")
+        self.results_layout.addWidget(attribution_label, 2, 0, 1, 2) # Span across both columns at the bottom
 
 
-        # --- Padding and Weight ---
-        for i in range(20): # Adjusted for new breakdown label and attribution
-            self.results_frame.grid_rowconfigure(i, weight=1)
-        self.results_frame.grid_columnconfigure(1, weight=1)
-        self.input_frame.grid_columnconfigure(1, weight=1)
+    def init_ride_log_ui(self):
+        """Initializes the UI elements for the Ride Log tab."""
+        # Input fields for a new ride entry
+        input_group_box = QGroupBox("Log New Ride")
+        input_layout = QGridLayout(input_group_box)
 
-        master.grid_columnconfigure(0, weight=1)
-        master.grid_columnconfigure(1, weight=1)
-        master.grid_rowconfigure(0, weight=1)
+        input_layout.addWidget(QLabel("Date:"), 0, 0)
+        self.ride_date_edit = QDateTimeEdit(QDateTime.currentDateTime())
+        self.ride_date_edit.setCalendarPopup(True)
+        self.ride_date_edit.setDisplayFormat("yyyy-MM-dd HH:mm")
+        input_layout.addWidget(self.ride_date_edit, 0, 1)
 
-        # Load data for the initial profile (either last active or default)
-        self.load_profile_data(self.current_profile_name.get())
+        input_layout.addWidget(QLabel("Distance (miles):"), 1, 0)
+        self.ride_distance_entry = QLineEdit()
+        self.ride_distance_entry.setPlaceholderText("e.g., 15.5")
+        input_layout.addWidget(self.ride_distance_entry, 1, 1)
 
+        # Start Battery State
+        input_layout.addWidget(QLabel("Start Battery State:"), 2, 0)
+        self.ride_start_state_type_combo = QComboBox()
+        self.ride_start_state_type_combo.addItems(["Percentage (%)", "Voltage (V)"])
+        input_layout.addWidget(self.ride_start_state_type_combo, 2, 1)
+        
+        self.ride_start_value_entry = QLineEdit()
+        self.ride_start_value_entry.setPlaceholderText("e.g., 100 or 54.6")
+        input_layout.addWidget(self.ride_start_value_entry, 3, 1)
+
+        # End Battery State
+        input_layout.addWidget(QLabel("End Battery State:"), 4, 0)
+        self.ride_end_state_type_combo = QComboBox()
+        self.ride_end_state_type_combo.addItems(["Percentage (%)", "Voltage (V)"])
+        input_layout.addWidget(self.ride_end_state_type_combo, 4, 1)
+
+        self.ride_end_value_entry = QLineEdit()
+        self.ride_end_value_entry.setPlaceholderText("e.g., 40 or 44.0")
+        input_layout.addWidget(self.ride_end_value_entry, 5, 1)
+        
+        # NEW: Riding Style for Logged Ride
+        input_layout.addWidget(QLabel("Riding Style:"), 6, 0)
+        self.ride_driving_style_combo = QComboBox()
+        self.ride_driving_style_combo.addItems(["Agressive", "Casual", "Eco"])
+        self.ride_driving_style_combo.setCurrentText("Casual")
+        input_layout.addWidget(self.ride_driving_style_combo, 6, 1)
+
+        input_layout.addWidget(QLabel("Notes (Optional):"), 7, 0) # Shifted to row 7
+        self.ride_notes_entry = QLineEdit()
+        input_layout.addWidget(self.ride_notes_entry, 7, 1)
+
+        log_ride_button = QPushButton("Log Ride")
+        log_ride_button.clicked.connect(self.log_ride)
+        log_ride_button.setStyleSheet(
+            "QPushButton {"
+            "   background-color: #1a73e8; /* Blue */"
+            "   color: white;"
+            "   padding: 8px 15px;"
+            "   border-radius: 6px;"
+            "   font-size: 14px;"
+            "   font-weight: bold;"
+            "   border: none;"
+            "}"
+            "QPushButton:hover {"
+            "   background-color: #186bdc;"
+            "}"
+            "QPushButton:pressed {"
+            "   background-color: #1560c0;"
+            "}"
+        )
+        clear_log_fields_button = QPushButton("Clear Ride Fields")
+        clear_log_fields_button.clicked.connect(self.clear_ride_log_fields)
+
+        ride_log_buttons_layout = QHBoxLayout()
+        ride_log_buttons_layout.addWidget(log_ride_button)
+        ride_log_buttons_layout.addWidget(clear_log_fields_button)
+        input_layout.addLayout(ride_log_buttons_layout, 8, 0, 1, 2) # Shifted to row 8
+
+
+        # Table to display logged rides
+        self.ride_log_table = QTableWidget()
+        self.ride_log_table.setColumnCount(8) # Increased to 8 for "Riding Style"
+        self.ride_log_table.setHorizontalHeaderLabels([
+            "Date", "Distance (miles)", "Start (%)", "End (%)", "Wh Consumed", "Wh/mile", "Riding Style", "Notes" # Added "Riding Style"
+        ])
+        self.ride_log_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.ride_log_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows) # Select whole rows
+
+        delete_ride_button = QPushButton("Delete Selected Ride(s)")
+        delete_ride_button.clicked.connect(self.delete_selected_rides)
+        delete_ride_button.setStyleSheet(
+            "QPushButton {"
+            "   background-color: #d9534f; /* Red */"
+            "   color: white;"
+            "   padding: 8px 15px;"
+            "   border-radius: 6px;"
+            "   font-size: 14px;"
+            "   font-weight: bold;"
+            "   border: none;"
+            "}"
+            "QPushButton:hover {"
+            "   background-color: #c9302c;"
+            "}"
+            "QPushButton:pressed {"
+            "   background-color: #ac2925;"
+            "}"
+        )
+
+        # Average efficiency display
+        average_efficiency_group_box = QGroupBox("Average Efficiency from Logged Rides")
+        average_efficiency_layout = QVBoxLayout(average_efficiency_group_box) # Changed to QVBoxLayout
+        self.average_wh_per_mile_label = QLabel("Average Wh/mile: N/A")
+        self.average_miles_per_wh_label = QLabel("Average Miles/Wh: N/A") # New label for miles/Wh
+        average_efficiency_layout.addWidget(self.average_wh_per_mile_label)
+        average_efficiency_layout.addWidget(self.average_miles_per_wh_label)
+
+        self.apply_logged_efficiency_button = QPushButton("Apply Logged Efficiency to Calculator")
+        self.apply_logged_efficiency_button.clicked.connect(self.apply_logged_efficiency_to_calculator)
+        self.apply_logged_efficiency_button.setStyleSheet(
+            "QPushButton {"
+            "   background-color: #007bff; /* Bootstrap primary blue */"
+            "   color: white;"
+            "   padding: 8px 15px;"
+            "   border-radius: 6px;"
+            "   font-size: 14px;"
+            "   font-weight: bold;"
+            "   border: none;"
+            "}"
+            "QPushButton:hover {"
+            "   background-color: #0069d9;"
+            "}"
+            "QPushButton:pressed {"
+            "   background-color: #0062cc;"
+            "}"
+        )
+        average_efficiency_layout.addWidget(self.apply_logged_efficiency_button)
+
+
+        self.ride_log_main_layout.addWidget(input_group_box)
+        self.ride_log_main_layout.addWidget(self.ride_log_table)
+        self.ride_log_main_layout.addWidget(delete_ride_button)
+        self.ride_log_main_layout.addWidget(average_efficiency_group_box)
+
+
+    def closeEvent(self, event):
+        """Overrides the close event to save settings before exiting."""
+        self.save_current_profile()
+        event.accept()
 
     def load_all_profiles(self):
         """Loads all profiles from the settings file."""
@@ -268,26 +578,23 @@ class BatteryCalculatorGUI:
                 with open(SETTINGS_FILE, 'r') as f:
                     data = json.load(f)
                     self.all_profiles = data.get("profiles", {})
-                    # Set the last active profile if available, otherwise default
                     last_active = data.get("last_active_profile")
-                    if last_active and last_active in self.all_profiles:
-                        self.current_profile_name.set(last_active)
-                    elif self.all_profiles: # If there are profiles but no last_active, pick the first one
-                        self.current_profile_name.set(list(self.all_profiles.keys())[0])
-                    else: # No profiles at all, create a default one
+
+                    if not self.all_profiles: # If settings file is empty or only profiles are empty
                         self.all_profiles["Default Profile"] = self._get_default_profile_settings()
-                        self.current_profile_name.set("Default Profile")
+                        self.current_profile_name = "Default Profile"
+                    elif last_active and last_active in self.all_profiles:
+                        self.current_profile_name = last_active
+                    else: # If there are profiles but no last_active or last_active is invalid, pick the first one
+                        self.current_profile_name = list(self.all_profiles.keys())[0]
 
             except Exception as e:
-                messagebox.showerror("Error", f"Failed to load settings: {e}\nCreating a new default profile.")
+                QMessageBox.critical(self, "Error", f"Failed to load settings: {e}\nCreating a new default profile.")
                 self.all_profiles = {"Default Profile": self._get_default_profile_settings()}
-                self.current_profile_name.set("Default Profile")
+                self.current_profile_name = "Default Profile"
         else:
             self.all_profiles = {"Default Profile": self._get_default_profile_settings()}
-            self.current_profile_name.set("Default Profile")
-        
-        # self.update_profile_combo() # This call was moved to after self.profile_combo creation
-
+            self.current_profile_name = "Default Profile"
 
     def _get_default_profile_settings(self):
         """Returns a dictionary with default settings for a new profile."""
@@ -302,74 +609,93 @@ class BatteryCalculatorGUI:
             "charge_input_method": "percentage",
             "motor_wattage": "",
             "wheel_diameter": "",
-            "driving_style": "Casual"
+            "driving_style": "Casual",
+            "preferred_cutoff_percentage": "25", # NEW: Default cutoff
+            "ride_log": [] # New entry for ride log data
         }
 
     def update_profile_combo(self):
         """Updates the profile selection combobox with current profile names."""
-        self.profile_combo['values'] = list(self.all_profiles.keys())
-        # Ensure the currently selected value is still in the list, or default
-        if self.current_profile_name.get() not in self.all_profiles:
-            if self.all_profiles:
-                self.current_profile_name.set(list(self.all_profiles.keys())[0])
-            else:
-                self.current_profile_name.set("Default Profile") # Should not happen if a default is always created
-        self.profile_combo.set(self.current_profile_name.get()) # Refresh display
-
+        self.profile_combo.clear()
+        self.profile_combo.addItems(list(self.all_profiles.keys()))
+        self.profile_combo.setCurrentText(self.current_profile_name)
 
     def load_profile_data(self, profile_name):
         """Loads the settings for the given profile name into the GUI fields."""
         if profile_name not in self.all_profiles:
-            messagebox.showerror("Error", f"Profile '{profile_name}' not found.")
+            QMessageBox.critical(self, "Error", f"Profile '{profile_name}' not found.")
             return
+
+        self.current_profile_name = profile_name # Update current active profile
+        self.profile_combo.setCurrentText(profile_name) # Update combobox display
 
         settings = self.all_profiles[profile_name]
         self.clear_fields(keep_profile_name=True) # Clear current display but keep profile name
 
-        # Populate fields from the loaded settings
-        self.voltage_entry.insert(0, settings.get("voltage", ""))
-        self.series_cells_entry.insert(0, settings.get("series_cells", ""))
-        self.capacity_type_combo.set(settings.get("capacity_type", "Wh"))
-        self.capacity_entry.insert(0, settings.get("capacity", ""))
-        self.charge_rate_entry.insert(0, settings.get("charge_rate", ""))
-        self.current_percentage_entry.insert(0, settings.get("current_percentage", "0"))
-        self.current_voltage_entry.insert(0, settings.get("current_voltage", ""))
-        self.motor_wattage_entry.insert(0, settings.get("motor_wattage", ""))
-        self.wheel_diameter_entry.insert(0, settings.get("wheel_diameter", ""))
-        self.driving_style_combo.set(settings.get("driving_style", "Casual"))
-        self.charge_input_method.set(settings.get("charge_input_method", "percentage"))
+        # Populate fields from the loaded settings for the Calculator tab
+        self.voltage_entry.setText(settings.get("voltage", ""))
+        self.series_cells_entry.setText(settings.get("series_cells", ""))
+        self.capacity_type_combo.setCurrentText(settings.get("capacity_type", "Wh"))
+        self.capacity_entry.setText(settings.get("capacity", ""))
+        self.charge_rate_entry.setText(settings.get("charge_rate", ""))
+        self.charging_duration_combo.setCurrentText(settings.get("charging_duration_hours", ""))
+        self.current_percentage_entry.setText(settings.get("current_percentage", "0"))
+        self.current_voltage_entry.setText(settings.get("current_voltage", ""))
+        self.preferred_cutoff_entry.setText(settings.get("preferred_cutoff_percentage", "25")) # NEW: Load cutoff
+        
+        # Set radio button based on loaded method
+        charge_method = settings.get("charge_input_method", "percentage")
+        if charge_method == "percentage":
+            self.percent_radio.setChecked(True)
+        else:
+            self.voltage_radio.setChecked(True)
 
-        self.update_capacity_label() # Ensure correct label for capacity
-        self.toggle_charge_input() # Ensure correct visibility of charge input fields
-        self.update_voltage_info_labels() # Ensure correct visibility/info for series cells/voltage
+        self.motor_wattage_entry.setText(settings.get("motor_wattage", ""))
+        self.wheel_diameter_entry.setText(settings.get("wheel_diameter", ""))
+        self.driving_style_combo.setCurrentText(settings.get("driving_style", "Casual"))
+
+        # Trigger updates after loading
+        self.update_capacity_label()
+        self.toggle_charge_input()
+        self.update_voltage_info_labels()
+
+        # Reset logged efficiency state for the new profile
+        self.reset_efficiency_source(show_message=False) # Do not show message on profile load
+
+        # Update the ride log table for the Ride Log tab
+        self.update_ride_log_table()
+        self.calculate_average_efficiency()
 
 
-    def on_profile_selection(self, event):
+    def on_profile_selection(self, profile_name):
         """Callback when a new profile is selected from the combobox."""
-        selected_profile = self.current_profile_name.get()
-        if selected_profile:
-            self.load_profile_data(selected_profile)
-
+        # This signal fires even when programmatically setting the text,
+        # so add a check to prevent unnecessary reloads if already loaded.
+        if self.current_profile_name != profile_name:
+            self.load_profile_data(profile_name)
 
     def save_current_profile(self):
         """Saves the current GUI field values into the active profile."""
-        profile_name = self.current_profile_name.get()
+        profile_name = self.current_profile_name
         current_settings = {
-            "voltage": self.voltage_entry.get(),
-            "series_cells": self.series_cells_entry.get() if self.series_cells_entry.winfo_ismapped() else "", # Only save if visible
-            "capacity_type": self.capacity_type_combo.get(),
-            "capacity": self.capacity_entry.get(),
-            "charge_rate": self.charge_rate_entry.get(),
-            "current_percentage": self.current_percentage_entry.get(),
-            "current_voltage": self.current_voltage_entry.get(),
-            "charge_input_method": self.charge_input_method.get(),
-            "motor_wattage": self.motor_wattage_entry.get(),
-            "wheel_diameter": self.wheel_diameter_entry.get(),
-            "driving_style": self.driving_style_combo.get(),
+            "voltage": self.voltage_entry.text(),
+            "series_cells": self.series_cells_entry.text() if self.series_cells_entry.isVisible() else "",
+            "capacity_type": self.capacity_type_combo.currentText(),
+            "capacity": self.capacity_entry.text(),
+            "charge_rate": self.charge_rate_entry.text(),
+            "charging_duration_hours": self.charging_duration_combo.currentText(),
+            "current_percentage": self.current_percentage_entry.text(),
+            "current_voltage": self.current_voltage_entry.text(),
+            "charge_input_method": "percentage" if self.percent_radio.isChecked() else "voltage",
+            "motor_wattage": self.motor_wattage_entry.text(),
+            "wheel_diameter": self.wheel_diameter_entry.text(),
+            "driving_style": self.driving_style_combo.currentText(),
+            "preferred_cutoff_percentage": self.preferred_cutoff_entry.text(), # NEW: Save cutoff
+            "ride_log": self.all_profiles.get(profile_name, {}).get("ride_log", []) # Preserve existing log
         }
         self.all_profiles[profile_name] = current_settings
         self._save_all_profiles_to_file(profile_name)
-        messagebox.showinfo("Success", f"Profile '{profile_name}' saved successfully!")
+        QMessageBox.information(self, "Success", f"Profile '{profile_name}' saved successfully!")
 
     def _save_all_profiles_to_file(self, last_active_profile_name):
         """Saves the entire self.all_profiles dictionary to the settings file."""
@@ -381,346 +707,624 @@ class BatteryCalculatorGUI:
             with open(SETTINGS_FILE, 'w') as f:
                 json.dump(data_to_save, f, indent=4)
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to save all profiles: {e}")
-
+            QMessageBox.critical(self, "Error", f"Failed to save all profiles: {e}")
 
     def create_new_profile(self):
         """Prompts for a new profile name and creates it."""
         if len(self.all_profiles) >= self.MAX_PROFILES:
-            messagebox.showwarning("Profile Limit", f"You can only have up to {self.MAX_PROFILES} profiles.")
+            QMessageBox.warning(self, "Profile Limit", f"You can only have up to {self.MAX_PROFILES} profiles.")
             return
 
-        new_name = simpledialog.askstring("New Profile", "Enter a name for the new profile:")
-        if new_name:
+        new_name, ok = QInputDialog.getText(self, "New Profile", "Enter a name for the new profile:")
+        if ok and new_name:
             new_name = new_name.strip()
             if not new_name:
-                messagebox.showerror("Invalid Name", "Profile name cannot be empty.")
+                QMessageBox.critical(self, "Invalid Name", "Profile name cannot be empty.")
                 return
             if new_name in self.all_profiles:
-                messagebox.showerror("Duplicate Name", f"Profile '{new_name}' already exists. Please choose a different name.")
+                QMessageBox.critical(self, "Duplicate Name", f"Profile '{new_name}' already exists. Please choose a different name.")
                 return
 
             self.all_profiles[new_name] = self._get_default_profile_settings()
-            self.current_profile_name.set(new_name)
+            self.current_profile_name = new_name
             self.update_profile_combo()
             self.load_profile_data(new_name) # Load the (empty) new profile data
-            self.save_current_profile() # Immediately save the new (empty) profile
-            messagebox.showinfo("New Profile", f"Profile '{new_name}' created.")
-
+            self._save_all_profiles_to_file(self.current_profile_name) # Immediately save the new (empty) profile
+            QMessageBox.information(self, "New Profile", f"Profile '{new_name}' created.")
 
     def delete_selected_profile(self):
         """Deletes the currently selected profile."""
-        profile_to_delete = self.current_profile_name.get()
+        profile_to_delete = self.current_profile_name
         if profile_to_delete == "Default Profile" and len(self.all_profiles) == 1:
-            messagebox.showwarning("Cannot Delete", "The 'Default Profile' cannot be deleted if it's the only profile.")
+            QMessageBox.warning(self, "Cannot Delete", "The 'Default Profile' cannot be deleted if it's the only profile.")
             return
         if profile_to_delete not in self.all_profiles:
-            messagebox.showerror("Error", "No profile selected or profile not found for deletion.")
+            QMessageBox.critical(self, "Error", "No profile selected or profile not found for deletion.")
             return
 
-        if messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete profile '{profile_to_delete}'? This cannot be undone."):
+        reply = QMessageBox.question(self, "Confirm Delete",
+                                     f"Are you sure you want to delete profile '{profile_to_delete}'? This cannot be undone.",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+
+        if reply == QMessageBox.StandardButton.Yes:
             del self.all_profiles[profile_to_delete]
-            self.update_profile_combo() # Remove from combobox
-            self._save_all_profiles_to_file(self.current_profile_name.get()) # Save changes
-
-            # If the deleted profile was the active one, switch to another or default
-            if profile_to_delete == self.current_profile_name.get():
-                if self.all_profiles:
-                    first_profile = list(self.all_profiles.keys())[0]
-                    self.current_profile_name.set(first_profile)
-                    self.load_profile_data(first_profile)
-                else:
-                    # Should not happen if "Default Profile" is always kept
-                    self.all_profiles["Default Profile"] = self._get_default_profile_settings()
-                    self.current_profile_name.set("Default Profile")
-                    self.load_profile_data("Default Profile")
+            self.update_profile_combo()
             
-            messagebox.showinfo("Deleted", f"Profile '{profile_to_delete}' deleted.")
+            # If the deleted profile was the active one, switch to another or default
+            if self.all_profiles:
+                first_profile = list(self.all_profiles.keys())[0]
+                self.current_profile_name = first_profile
+                self.load_profile_data(first_profile)
+            else:
+                self.all_profiles["Default Profile"] = self._get_default_profile_settings()
+                self.current_profile_name = "Default Profile"
+                self.load_profile_data("Default Profile")
+            
+            self._save_all_profiles_to_file(self.current_profile_name) # Save changes
+            QMessageBox.information(self, "Deleted", f"Profile '{profile_to_delete}' deleted.")
 
-
-    def update_voltage_info_labels(self, event=None):
-        nominal_voltage_str = self.voltage_entry.get()
+    def update_voltage_info_labels(self):
+        nominal_voltage_str = self.voltage_entry.text()
         inferred_s = None
+        
+        # Temporarily remove and re-add series_cells widgets for proper layout management
+        # This is a common PyQt pattern for conditionally showing/hiding widgets in a grid
+        # Check if parent is set before removing, to prevent errors on initial setup
+        if self.series_cells_label.parent() == self.battery_info_group_box:
+            self.battery_info_layout.removeWidget(self.series_cells_label)
+            self.battery_info_layout.removeWidget(self.series_cells_entry)
+        self.series_cells_label.hide()
+        self.series_cells_entry.hide()
 
         try:
             nominal_voltage_float = float(nominal_voltage_str)
-            # Try to infer S from nominal voltage
             inferred_s = self.NOMINAL_VOLTAGE_TO_SERIES_CELLS.get(int(round(nominal_voltage_float)))
             
-            # If a common nominal voltage matches, hide the series cells input
             if inferred_s is not None:
-                self.series_cells_label.grid_forget()
-                self.series_cells_entry.grid_forget()
-                # Update series_cells_entry with the inferred value, so it gets saved correctly
-                self.series_cells_entry.delete(0, tk.END)
-                self.series_cells_entry.insert(0, str(inferred_s))
+                self.series_cells_entry.setText(str(inferred_s))
+                # Do not show series cells input if inferred
             else:
-                # If nominal voltage not found in map, show the series cells input
-                self.series_cells_label.grid(row=3, column=0, sticky=tk.W, padx=5, pady=5) # Row shifted
-                self.series_cells_entry.grid(row=3, column=1, sticky=tk.E, padx=5, pady=5) # Row shifted
-                self.min_voltage_info_label.config(text="Empty V: N/A")
-                self.max_voltage_info_label.config(text="Full Charge V: N/A")
-                return # Exit early, as we need S from manual input now
+                # Show if nominal voltage not found in map
+                self.battery_info_layout.addWidget(self.series_cells_label, 1, 0) # Place at row 1, col 0
+                self.battery_info_layout.addWidget(self.series_cells_entry, 1, 1) # Place at row 1, col 1
+                self.series_cells_label.show()
+                self.series_cells_entry.show()
+                self.min_voltage_info_label.setText("Empty V: N/A")
+                self.max_voltage_info_label.setText("Full Charge V: N/A")
+                return
 
         except ValueError:
-            # Handle cases where nominal voltage input is not a valid number
             inferred_s = None
-            self.series_cells_label.grid(row=3, column=0, sticky=tk.W, padx=5, pady=5) # Row shifted
-            self.series_cells_entry.grid(row=3, column=1, sticky=tk.E, padx=5, pady=5) # Row shifted
-            self.min_voltage_info_label.config(text="Empty V: N/A")
-            self.max_voltage_info_label.config(text="Full Charge V: N/A")
-            return # Exit early, as we need S from manual input now
+            # Show if nominal voltage input is not a valid number
+            self.battery_info_layout.addWidget(self.series_cells_label, 1, 0)
+            self.battery_info_layout.addWidget(self.series_cells_entry, 1, 1)
+            self.series_cells_label.show()
+            self.series_cells_entry.show()
+            self.min_voltage_info_label.setText("Empty V: N/A")
+            self.max_voltage_info_label.setText("Full Charge V: N/A")
+            return
 
-        # Now, use the inferred_s or try to get it from the manual entry if it was visible
         series_cells = inferred_s
-        if series_cells is None: # If not inferred, try to get from manual entry
+        if series_cells is None:
             try:
-                series_cells = int(self.series_cells_entry.get())
+                series_cells = int(self.series_cells_entry.text())
             except ValueError:
                 series_cells = None
 
         if series_cells is not None and series_cells > 0:
             min_v = series_cells * self.CELL_VOLTAGE_EMPTY
             max_v = series_cells * self.CELL_VOLTAGE_FULL
-            self.min_voltage_info_label.config(text=f"Empty V: {min_v:.1f} (0%)")
-            self.max_voltage_info_label.config(text=f"Full Charge V: {max_v:.1f} (100%)")
+            self.min_voltage_info_label.setText(f"Empty V: {min_v:.1f} (0%)")
+            self.max_voltage_info_label.setText(f"Full Charge V: {max_v:.1f} (100%)")
         else:
-            self.min_voltage_info_label.config(text="Empty V: N/A")
-            self.max_voltage_info_label.config(text="Full Charge V: N/A")
-
+            self.min_voltage_info_label.setText("Empty V: N/A")
+            self.max_voltage_info_label.setText("N/A")
 
     def toggle_charge_input(self):
-        selected_method = self.charge_input_method.get()
-        if selected_method == "percentage":
-            self.current_percentage_label.grid(row=11, column=0, sticky=tk.W, padx=5, pady=5) # Row shifted
-            self.current_percentage_entry.grid(row=11, column=1, sticky=tk.E, padx=5, pady=5) # Row shifted
-            self.current_voltage_label.grid_forget()
-            self.current_voltage_entry.grid_forget()
-        else: # selected_method == "voltage"
-            self.current_percentage_label.grid_forget()
-            self.current_percentage_entry.grid_forget()
-            self.current_voltage_label.grid(row=11, column=0, sticky=tk.W, padx=5, pady=5) # Row shifted
-            self.current_voltage_entry.grid(row=11, column=1, sticky=tk.E, padx=5, pady=5) # Row shifted
+        # Remove widgets from layout before potentially re-adding them
+        # Check if parent is set before removing
+        if self.current_percentage_label.parent() == self.charging_group_box:
+            self.charging_layout.removeWidget(self.current_percentage_label)
+            self.charging_layout.removeWidget(self.current_percentage_entry)
+        if self.current_voltage_label.parent() == self.charging_group_box:
+            self.charging_layout.removeWidget(self.current_voltage_label)
+            self.charging_layout.removeWidget(self.current_voltage_entry)
 
-    def update_capacity_label(self, event=None):
-        selected_type = self.capacity_type_combo.get()
+        # Hide all to reset
+        self.current_percentage_label.hide()
+        self.current_percentage_entry.hide()
+        self.current_voltage_label.hide()
+        self.current_voltage_entry.hide()
+
+        # Add based on checked state
+        if self.percent_radio.isChecked():
+            self.charging_layout.addWidget(self.current_percentage_label, 3, 0)
+            self.charging_layout.addWidget(self.current_percentage_entry, 3, 1)
+            self.current_percentage_label.show()
+            self.current_percentage_entry.show()
+        else: # Voltage radio is checked
+            self.charging_layout.addWidget(self.current_voltage_label, 3, 0)
+            self.charging_layout.addWidget(self.current_voltage_entry, 3, 1)
+            self.current_voltage_label.show()
+            self.current_voltage_entry.show()
+        
+        # Ensure layout updates correctly after visibility changes
+        self.charging_group_box.adjustSize()
+        self.input_frame.adjustSize()
+
+
+    def update_capacity_label(self):
+        selected_type = self.capacity_type_combo.currentText()
         if selected_type == "Wh":
-            self.capacity_label_text.set("Battery Capacity (Wh):")
+            self.capacity_label.setText("Battery Capacity (Wh):")
         elif selected_type == "Ah":
-            self.capacity_label_text.set("Battery Capacity (Ah):")
+            self.capacity_label.setText("Battery Capacity (Ah):")
 
     def calculate_all(self):
-        self.calculate_range()
-        self.calculate_charge_time_and_remaining_range()
+        # Update breakdown first to show current input values, even if calculations fail
         self.update_breakdown()
 
+        # Always attempt to calculate estimated range
+        self.calculate_range()
+        
+        # Calculate time to full charge and remaining range/percentage based on current state
+        self.calculate_charge_time_and_remaining_range()
+        
+        # NEW: Calculate range to cutoff and charge time from cutoff
+        self.calculate_cutoff_metrics()
+
+        # Get inputs for optional percentage after charge calculation
+        charger_rate_str = self.charge_rate_entry.text()
+        charging_duration_str = self.charging_duration_combo.currentText()
+        
+        # Only attempt "percentage after charge" calculation if both inputs are present
+        if charging_duration_str and charger_rate_str:
+            try:
+                duration_hours = float(charging_duration_str.split(" ")[0])
+                self.calculate_percentage_after_charge(duration_hours)
+            except ValueError:
+                if not self.is_initializing: # Suppress during initialization
+                    QMessageBox.warning(self, "Input Error", "Invalid charging duration format. Please select from the dropdown or clear it to disable this calculation.")
+                self.percentage_after_charge_label.setText("N/A")
+        else:
+            self.percentage_after_charge_label.setText("") # Clear this if no duration is set or charger rate is missing
+
     def get_derived_voltage_range_and_s(self):
-        """Calculates min and max voltage and the series cell count based on user input (inferred or manual)."""
+        """Calculates min and max voltage and the series cell count based on user input (inferred or manual).
+           Does NOT show messageboxes directly; returns None for invalid inputs."""
         series_cells = None
-        nominal_voltage_str = self.voltage_entry.get()
+        nominal_voltage_str = self.voltage_entry.text()
 
         try:
             nominal_voltage_float = float(nominal_voltage_str)
-            # Try to infer S from nominal voltage first
-            series_cells = self.NOMINAL_VOLTAGE_TO_SERIES_CELLS.get(int(round(nominal_voltage_float)))
+            inferred_s = self.NOMINAL_VOLTAGE_TO_SERIES_CELLS.get(int(round(nominal_voltage_float)))
             
-            if series_cells is None: # If not inferred, try to get from the manual entry
-                series_cells = int(self.series_cells_entry.get())
-                if series_cells <= 0:
-                    messagebox.showerror("Input Error", "Number of Cells in Series (S) must be a positive integer.")
-                    return None, None, None # min_v, max_v, S
+            if inferred_s is not None:
+                series_cells = inferred_s
+            else:
+                try:
+                    series_cells = int(self.series_cells_entry.text())
+                    if series_cells <= 0:
+                        return None, None, None
+                except ValueError:
+                    return None, None, None
+
         except ValueError:
-            messagebox.showerror("Input Error", "Please enter valid numbers for Nominal Voltage and, if prompted, Cells in Series (S).")
             return None, None, None
 
         if series_cells is None or series_cells <= 0:
-            messagebox.showerror("Input Error", "Could not determine Cells in Series (S). Please ensure Nominal Voltage is a common value or manually enter Cells in Series (S).")
             return None, None, None
 
         min_voltage = series_cells * self.CELL_VOLTAGE_EMPTY
         max_voltage = series_cells * self.CELL_VOLTAGE_FULL
         return min_voltage, max_voltage, series_cells
 
-    def get_current_battery_percentage(self):
-        selected_method = self.charge_input_method.get()
-        
-        min_voltage, max_voltage, series_cells = self.get_derived_voltage_range_and_s()
-        if min_voltage is None or max_voltage is None: # Error already handled by get_derived_voltage_range_and_s
-            return None, None # Return None for both percentage and current_voltage
+    def get_current_battery_percentage(self, voltage_override=None, nominal_voltage_override=None, capacity_override=None, capacity_type_override=None):
+        """
+        Determines current battery percentage and voltage based on user's input method (or provided overrides).
+        This is a helper for both calculator tab and ride log.
+        Returns (percentage, voltage) or (None, None) for invalid inputs.
+        """
+        # Get battery info from current profile (or use overrides if provided for ride logging)
+        nominal_voltage_str = nominal_voltage_override if nominal_voltage_override is not None else self.voltage_entry.text()
+        capacity_str = capacity_override if capacity_override is not None else self.capacity_entry.text()
+        capacity_type = capacity_type_override if capacity_type_override is not None else self.capacity_type_combo.currentText()
 
-        if selected_method == "percentage":
+        min_voltage, max_voltage, series_cells = self.get_derived_voltage_range_and_s()
+        if min_voltage is None or max_voltage is None or series_cells is None:
+            return None, None # Cannot proceed without valid battery range info
+
+        if voltage_override is not None: # If a specific voltage is passed (e.g., from ride log)
+            current_voltage = voltage_override
             try:
-                percent = float(self.current_percentage_entry.get())
+                # Calculate percentage from voltage
+                voltage_range_diff = max_voltage - min_voltage
+                if voltage_range_diff > 0:
+                    percentage = ((current_voltage - min_voltage) / voltage_range_diff) * 100
+                    percent = max(0.0, min(100.0, percentage)) # Clamp between 0 and 100
+                else:
+                    percent = 0.0 if current_voltage <= min_voltage else 100.0 # Handle edge case if range is zero or invalid
+                return percent, current_voltage
+            except ValueError:
+                return None, None # Invalid voltage input
+        elif self.percent_radio.isChecked() and voltage_override is None: # Standard calculator tab, percentage input
+            try:
+                percent = float(self.current_percentage_entry.text())
                 if not 0 <= percent <= 100:
-                    messagebox.showerror("Input Error", "Current percentage must be between 0 and 100.")
-                    return None, None
+                    return None, None # Percentage out of range
                 
                 # Estimate current voltage from percentage
                 estimated_current_voltage = min_voltage + (percent / 100) * (max_voltage - min_voltage)
                 return percent, estimated_current_voltage
 
             except ValueError:
-                messagebox.showerror("Input Error", "Please enter a valid number for current percentage.")
-                return None, None
-        else: # selected_method == "voltage"
+                return None, None # Invalid percentage input
+        elif self.voltage_radio.isChecked() and voltage_override is None: # Standard calculator tab, voltage input
             try:
-                current_voltage = float(self.current_voltage_entry.get())
+                current_voltage = float(self.current_voltage_entry.text())
 
-                if not (min_voltage <= current_voltage <= max_voltage):
-                    messagebox.showwarning("Input Warning", f"Current Voltage {current_voltage:.1f}V is outside the typical range ({min_voltage:.1f}V - {max_voltage:.1f}V) for your battery. Calculation might be inaccurate.")
-
-                # Linear approximation of percentage from voltage
                 voltage_range_diff = max_voltage - min_voltage
                 if voltage_range_diff > 0:
                     percentage = ((current_voltage - min_voltage) / voltage_range_diff) * 100
-                    percent = max(0, min(100, percentage)) # Clamp between 0 and 100
+                    percent = max(0.0, min(100.0, percentage)) # Clamp between 0 and 100
                 else:
-                    percent = 0 if current_voltage <= min_voltage else 100 # Handle edge case if range is zero or invalid
-                    messagebox.showwarning("Warning", "Battery's calculated min and max voltage are the same or invalid for percentage calculation.")
+                    percent = 0.0 if current_voltage <= min_voltage else 100.0 # Handle edge case if range is zero or invalid
 
                 return percent, current_voltage
             except ValueError:
-                messagebox.showerror("Input Error", "Please enter a valid number for current voltage.")
-                return None, None
-
-
-    def update_breakdown(self):
-        nominal_voltage = self.voltage_entry.get()
-        capacity_type = self.capacity_type_combo.get()
-        capacity = self.capacity_entry.get()
-        motor_wattage = self.motor_wattage_entry.get()
-        wheel_diameter = self.wheel_diameter_entry.get() # Get wheel diameter for breakdown
-        charge_rate = self.charge_rate_entry.get()
-
-        self.breakdown_voltage_label.config(text=nominal_voltage)
-
-        min_v, max_v, series_cells = self.get_derived_voltage_range_and_s()
-        if series_cells is not None:
-            self.breakdown_series_cells_label.config(text=f"{series_cells}S")
+                return None, None # Invalid voltage input
         else:
-            self.breakdown_series_cells_label.config(text="N/A")
+            return None, None # Fallback for unknown state
 
-        if min_v is not None and max_v is not None:
-            self.breakdown_min_max_voltage_label.config(text=f"{min_v:.1f}V - {max_v:.1f}V")
-        else:
-            self.breakdown_min_max_voltage_label.config(text="N/A")
+
+    def calculate_percentage_after_charge(self, duration_hours):
+        """Calculates the estimated battery percentage after a specified charging duration."""
+        self.percentage_after_charge_label.setText("") # Clear previous result at the start
 
         try:
-            float_nominal_voltage = float(nominal_voltage)
-            float_capacity = float(capacity)
-            if capacity_type == "Ah":
-                self.breakdown_ah_label.config(text=f"{float_capacity:.2f}")
-                wh = float_capacity * float_nominal_voltage
-                self.breakdown_wh_label.config(text=f"{wh:.2f}")
-            else: # Wh
-                self.breakdown_wh_label.config(text=f"{float_capacity:.2f}")
-                ah = float_capacity / float_nominal_voltage if float_nominal_voltage > 0 else 0
-                self.breakdown_ah_label.config(text=f"{ah:.2f}")
-        except ValueError:
-            self.breakdown_ah_label.config(text="N/A")
-            self.breakdown_wh_label.config(text="N/A")
-        except ZeroDivisionError:
-            self.breakdown_ah_label.config(text="Div/0 Error")
-            self.breakdown_wh_label.config(text="Div/0 Error")
+            nominal_voltage_str = self.voltage_entry.text()
+            capacity_type = self.capacity_type_combo.currentText()
+            capacity_str = self.capacity_entry.text()
+            charge_rate_str = self.charge_rate_entry.text()
 
-        self.breakdown_motor_watts_label.config(text=motor_wattage)
-        self.breakdown_wheel_diameter_label.config(text=f"{wheel_diameter} in") # Update breakdown label
-        self.breakdown_charge_rate_label.config(text=charge_rate)
+            # Convert inputs safely
+            nominal_voltage = float(nominal_voltage_str) if nominal_voltage_str else 0.0
+            capacity = float(capacity_str) if capacity_str else 0.0
+            charge_rate = float(charge_rate_str) if charge_rate_str else 0.0
+
+            if nominal_voltage <= 0 or capacity <= 0 or charge_rate <= 0:
+                if not self.is_initializing: # Suppress during initialization
+                    pass # Suppress this specific message as it can be repetitive during initial load
+                return
+
+            total_capacity_wh = capacity if capacity_type == "Wh" else capacity * nominal_voltage
+            total_capacity_ah = total_capacity_wh / nominal_voltage if nominal_voltage > 0 else 0
+
+            if total_capacity_ah <= 0:
+                if not self.is_initializing: # Suppress during initialization
+                    pass # Suppress repetitive message
+                return
+
+            current_percentage, _ = self.get_current_battery_percentage()
+            if current_percentage is None:
+                if not self.is_initializing: # Suppress during initialization
+                    pass # Suppress repetitive message
+                return
+
+            current_ah = total_capacity_ah * (current_percentage / 100)
+            ah_charged_in_duration = charge_rate * duration_hours
+            new_ah = current_ah + ah_charged_in_duration
+            new_percentage = (new_ah / total_capacity_ah) * 100
+            new_percentage = min(100.0, new_percentage) # Cap at 100%
+
+            self.percentage_after_charge_label.setText(f"{new_percentage:.2f}%")
+
+        except ValueError:
+            if not self.is_initializing: # Suppress during initialization
+                pass # Suppress repetitive message
+        except ZeroDivisionError:
+            if not self.is_initializing: # Suppress during initialization
+                pass # Suppress repetitive message
+
+    def calculate_cutoff_metrics(self):
+        """Calculates range to preferred cutoff and charge time from preferred cutoff."""
+        self.range_to_cutoff_label.setText("")
+        self.charge_time_from_cutoff_label.setText("")
+
+        try:
+            preferred_cutoff_str = self.preferred_cutoff_entry.text()
+            preferred_cutoff_percentage = float(preferred_cutoff_str) if preferred_cutoff_str else 0.0
+
+            if not (0 <= preferred_cutoff_percentage <= 100):
+                if not self.is_initializing:
+                    QMessageBox.warning(self, "Input Error", "Preferred Cutoff Percentage must be between 0 and 100.")
+                return
+
+            current_percentage, _ = self.get_current_battery_percentage()
+            if current_percentage is None:
+                # Error message already handled by get_current_battery_percentage or other checks
+                return
+
+            # Ensure current percentage is greater than cutoff for a meaningful range to cutoff calculation
+            if current_percentage <= preferred_cutoff_percentage:
+                self.range_to_cutoff_label.setText("N/A (At/Below Cutoff)")
+            else:
+                # Calculate range to cutoff
+                nominal_voltage_str = self.voltage_entry.text()
+                capacity_type = self.capacity_type_combo.currentText()
+                capacity_str = self.capacity_entry.text()
+                
+                nominal_voltage = float(nominal_voltage_str) if nominal_voltage_str else 0.0
+                capacity = float(capacity_str) if capacity_str else 0.0
+
+                if nominal_voltage <= 0 or capacity <= 0:
+                    if not self.is_initializing:
+                        pass
+                    return
+                
+                total_energy_wh = capacity if capacity_type == "Wh" else capacity * nominal_voltage
+
+                # Retrieve adjusted_wh_per_mile (from calculate_range, which updates self.efficiency_source_label)
+                # It's better to ensure calculate_range has already run and populated full_charge_range and adjusted_wh_per_mile
+                # If calculate_range fails, full_charge_range will be 0 or N/A
+                if not hasattr(self, 'full_charge_range') or self.full_charge_range <= 0:
+                    pass
+                    return
+                
+                # Calculate the percentage of battery capacity between current and cutoff
+                percent_difference = current_percentage - preferred_cutoff_percentage
+                
+                # Calculate the Wh available in that percentage range
+                wh_available_to_cutoff = total_energy_wh * (percent_difference / 100)
+
+                # Use the same efficiency as the main range calculation
+                # adjusted_wh_per_mile is obtained from calculate_range's logic
+                # We need to ensure we have a valid adjusted_wh_per_mile here.
+                # If calculate_range populated self.miles_per_wh_label, we can derive it.
+                try:
+                    miles_per_wh = float(self.miles_per_wh_label.text()) # Get the value already displayed
+                    adjusted_wh_per_mile = 1 / miles_per_wh if miles_per_wh > 0 else 0
+                except ValueError:
+                    adjusted_wh_per_mile = 0
+
+                if adjusted_wh_per_mile > 0:
+                    range_to_cutoff = wh_available_to_cutoff / adjusted_wh_per_mile
+                    self.range_to_cutoff_label.setText(f"{range_to_cutoff:.2f}")
+                else:
+                    self.range_to_cutoff_label.setText("N/A (Efficiency Error)")
+
+
+            # Calculate charge time from cutoff
+            charge_rate_str = self.charge_rate_entry.text()
+            charge_rate = float(charge_rate_str) if charge_rate_str else 0.0
+
+            if nominal_voltage <= 0 or capacity <= 0 or charge_rate <= 0:
+                if not self.is_initializing:
+                    pass
+                return
+
+            total_capacity_wh = capacity if capacity_type == "Wh" else capacity * nominal_voltage
+            total_capacity_ah = total_capacity_wh / nominal_voltage if nominal_voltage > 0 else 0
+
+            if total_capacity_ah <= 0:
+                if not self.is_initializing:
+                    pass
+                return
+
+            ah_to_charge_from_cutoff = total_capacity_ah * ((100 - preferred_cutoff_percentage) / 100)
+            if charge_rate > 0:
+                charge_time_from_cutoff = ah_to_charge_from_cutoff / charge_rate
+                self.charge_time_from_cutoff_label.setText(f"{charge_time_from_cutoff:.2f}")
+            else:
+                self.charge_time_from_cutoff_label.setText("N/A (Charger Rate is zero)")
+
+
+        except ValueError:
+            if not self.is_initializing:
+                pass
+        except ZeroDivisionError:
+            if not self.is_initializing:
+                pass
+
+    def update_breakdown(self):
+        """Updates the breakdown section of the GUI with current input values and calculated derived values."""
+        # Get raw input values
+        nominal_voltage = self.voltage_entry.text()
+        capacity_type = self.capacity_type_combo.currentText()
+        capacity = self.capacity_entry.text()
+        motor_wattage = self.motor_wattage_entry.text()
+        wheel_diameter = self.wheel_diameter_entry.text()
+        charge_rate = self.charge_rate_entry.text()
+        charging_duration = self.charging_duration_combo.currentText()
+        preferred_cutoff = self.preferred_cutoff_entry.text() # NEW: Get cutoff
+
+        # Update labels with raw input values
+        self.breakdown_voltage_label.setText(nominal_voltage)
+        self.breakdown_motor_watts_label.setText(motor_wattage)
+        self.breakdown_wheel_diameter_label.setText(f"{wheel_diameter} in" if wheel_diameter else "N/A")
+        self.breakdown_charge_rate_label.setText(charge_rate)
+        self.breakdown_charge_duration_label.setText(charging_duration)
+        self.breakdown_preferred_cutoff_label.setText(f"{preferred_cutoff}%" if preferred_cutoff else "N/A") # NEW: Display cutoff
+
+
+        # Calculate and update derived values for breakdown
+        min_v, max_v, series_cells = self.get_derived_voltage_range_and_s()
+        if series_cells is not None:
+            self.breakdown_series_cells_label.setText(f"{series_cells}S")
+        else:
+            self.breakdown_series_cells_label.setText("N/A")
+
+        if min_v is not None and max_v is not None:
+            self.breakdown_min_max_voltage_label.setText(f"{min_v:.1f}V - {max_v:.1f}V")
+        else:
+            self.breakdown_min_max_voltage_label.setText("N/A")
+
+        try:
+            float_nominal_voltage = float(nominal_voltage) if nominal_voltage else 0.0
+            float_capacity = float(capacity) if capacity else 0.0
+
+            if capacity_type == "Ah":
+                self.breakdown_ah_label.setText(f"{float_capacity:.2f}")
+                wh = float_capacity * float_nominal_voltage if float_nominal_voltage > 0 else 0
+                self.breakdown_wh_label.setText(f"{wh:.2f}")
+            else: # Wh
+                self.breakdown_wh_label.setText(f"{float_capacity:.2f}")
+                ah = float_capacity / float_nominal_voltage if float_nominal_voltage > 0 else 0
+                self.breakdown_ah_label.setText(f"{ah:.2f}")
+        except ValueError:
+            self.breakdown_ah_label.setText("N/A")
+            self.breakdown_wh_label.setText("N/A")
+        except ZeroDivisionError:
+            self.breakdown_ah_label.setText("Div/0 Error")
+            self.breakdown_wh_label.setText("Div/0 Error")
 
         current_percentage, actual_current_voltage = self.get_current_battery_percentage()
         if current_percentage is not None:
-            self.breakdown_current_state_percent_label.config(text=f"{current_percentage:.2f}%")
+            self.breakdown_current_state_percent_label.setText(f"{current_percentage:.2f}%")
             if actual_current_voltage is not None:
-                self.breakdown_current_state_voltage_label.config(text=f"{actual_current_voltage:.2f}V")
+                self.breakdown_current_state_voltage_label.setText(f"{actual_current_voltage:.2f}V")
             else:
-                self.breakdown_current_state_voltage_label.config(text="N/A")
+                self.breakdown_current_state_voltage_label.setText("N/A")
         else:
-            self.breakdown_current_state_percent_label.config(text="N/A")
-            self.breakdown_current_state_voltage_label.config(text="N/A")
+            self.breakdown_current_state_percent_label.setText("N/A")
+            self.breakdown_current_state_voltage_label.setText("N/A")
 
+        # Calculate and display preferred cutoff voltage
+        if preferred_cutoff and min_v is not None and max_v is not None and (max_v - min_v) > 0:
+            try:
+                preferred_cutoff_percentage = float(preferred_cutoff)
+                if 0 <= preferred_cutoff_percentage <= 100:
+                    preferred_cutoff_voltage = min_v + (preferred_cutoff_percentage / 100) * (max_v - min_v)
+                    self.breakdown_preferred_cutoff_voltage_label.setText(f"{preferred_cutoff_voltage:.2f}V")
+                else:
+                    self.breakdown_preferred_cutoff_voltage_label.setText("N/A (Invalid %)")
+            except ValueError:
+                self.breakdown_preferred_cutoff_voltage_label.setText("N/A")
+        else:
+            self.breakdown_preferred_cutoff_voltage_label.setText("N/A")
 
     def calculate_range(self):
+        """Calculates and displays the estimated range of the vehicle."""
+        # Always clear previous results at the start of calculation
+        self.calculated_range_label.setText("")
+        self.miles_per_wh_label.setText("")
+        self.miles_per_ah_label.setText("")
+        self.full_charge_range = 0 # Reset in case of error
+        self.range_unit = "miles" # Reset to default unit
+
         try:
-            nominal_voltage = float(self.voltage_entry.get()) # Nominal voltage
-            capacity_type = self.capacity_type_combo.get()
-            capacity = float(self.capacity_entry.get())
-            driving_style = self.driving_style_combo.get()
-            wheel_diameter = float(self.wheel_diameter_entry.get()) # New: Get wheel diameter
+            nominal_voltage_str = self.voltage_entry.text()
+            capacity_type = self.capacity_type_combo.currentText()
+            capacity_str = self.capacity_entry.text()
+            driving_style = self.driving_style_combo.currentText()
+            wheel_diameter_str = self.wheel_diameter_entry.text()
+
+            nominal_voltage = float(nominal_voltage_str) if nominal_voltage_str else 0.0
+            capacity = float(capacity_str) if capacity_str else 0.0
+            wheel_diameter = float(wheel_diameter_str) if wheel_diameter_str else 0.0
             
             if nominal_voltage <= 0 or capacity <= 0 or wheel_diameter <= 0:
-                messagebox.showerror("Error", "Please enter valid positive numbers for nominal voltage, capacity, and wheel diameter.")
+                if not self.is_initializing: # Suppress during initialization
+                    pass # Suppress repetitive message
+                # Update efficiency source to indicate an issue
+                self.efficiency_source_label.setText("Error")
                 return
 
             if capacity_type == "Wh":
                 total_energy_wh = capacity
             else:  # capacity_type == "Ah"
-                total_energy_wh = capacity * nominal_voltage # Convert Ah to Wh using nominal voltage
+                total_energy_wh = capacity * nominal_voltage
 
-            # --- Calculate Adjusted Wh/mile based on Wheel Diameter and Driving Style ---
-            interpolation_factor = (wheel_diameter - self.SMALL_WHEEL_REF) / (self.LARGE_WHEEL_REF - self.SMALL_WHEEL_REF)
-            
-            # Clamp factor between 0 and 1 to ensure it stays within our defined range
-            interpolation_factor = max(0.0, min(1.0, interpolation_factor))
+            # --- Determine adjusted_wh_per_mile based on source ---
+            adjusted_wh_per_mile = 0.0
+            if self.use_logged_efficiency and self.logged_wh_per_mile_average > 0:
+                adjusted_wh_per_mile = self.logged_wh_per_mile_average
+                self.efficiency_source_label.setText("Logged") # More concise
+            else:
+                # Calculate Adjusted Wh/mile based on Wheel Diameter and Driving Style (Predicted)
+                interpolation_factor = (wheel_diameter - self.SMALL_WHEEL_REF) / (self.LARGE_WHEEL_REF - self.SMALL_WHEEL_REF)
+                
+                # Clamp factor between 0 and 1 to ensure it stays within our defined range
+                interpolation_factor = max(0.0, min(1.0, interpolation_factor))
 
-            base_wh_per_mile_small = self.SMALL_WHEEL_EFFICIENCY.get(driving_style)
-            base_wh_per_mile_large = self.LARGE_WHEEL_EFFICIENCY.get(driving_style)
+                base_wh_per_mile_small = self.SMALL_WHEEL_EFFICIENCY.get(driving_style)
+                base_wh_per_mile_large = self.LARGE_WHEEL_EFFICIENCY.get(driving_style)
 
-            if base_wh_per_mile_small is None or base_wh_per_mile_large is None:
-                messagebox.showerror("Error", "Invalid driving style selected for efficiency lookup.")
-                return
+                if base_wh_per_mile_small is None or base_wh_per_mile_large is None:
+                    if not self.is_initializing: # Suppress during initialization
+                        QMessageBox.critical(self, "Error", "Invalid driving style selected for efficiency lookup in range calculation.")
+                    self.efficiency_source_label.setText("Error")
+                    return
 
-            adjusted_wh_per_mile = (base_wh_per_mile_small * (1 - interpolation_factor) +
-                                   base_wh_per_mile_large * interpolation_factor)
+                adjusted_wh_per_mile = (base_wh_per_mile_small * (1 - interpolation_factor) +
+                                       base_wh_per_mile_large * interpolation_factor)
+                self.efficiency_source_label.setText("Predicted")
+
 
             if adjusted_wh_per_mile <= 0:
-                messagebox.showerror("Error", "Calculated efficiency (Wh/mile) must be greater than zero.")
+                if not self.is_initializing: # Suppress during initialization
+                    QMessageBox.critical(self, "Error", "Calculated efficiency (Wh/mile) must be greater than zero for range calculation.")
+                self.efficiency_source_label.setText("Error")
                 return
 
-            # Calculate estimated range directly from total Wh and adjusted Wh/mile efficiency
             estimated_range = total_energy_wh / adjusted_wh_per_mile
-            calculated_unit = "miles" # Assuming miles for range
+            calculated_unit = "miles"
 
-            self.calculated_range_label.config(text=f"{estimated_range:.2f}")
-            self.calculated_range_unit_label.config(text=calculated_unit)
+            self.calculated_range_label.setText(f"{estimated_range:.2f}")
+            self.calculated_range_unit_label.setText(calculated_unit)
 
-            # Calculate miles per Wh and Ah based on the chosen efficiency
             miles_per_wh = 1 / adjusted_wh_per_mile
-            self.miles_per_wh_label.config(text=f"{miles_per_wh:.2f}")
+            self.miles_per_wh_label.setText(f"{miles_per_wh:.2f}")
 
             miles_per_ah = nominal_voltage / adjusted_wh_per_mile if adjusted_wh_per_mile > 0 else 0
-            self.miles_per_ah_label.config(text=f"{miles_per_ah:.2f}")
+            self.miles_per_ah_label.setText(f"{miles_per_ah:.2f}")
 
-            # Store full charge range for remaining range calculation
             self.full_charge_range = estimated_range
             self.range_unit = calculated_unit
 
         except ValueError:
-            messagebox.showerror("Error", "Invalid input. Please enter numeric values for all relevant fields.")
+            if not self.is_initializing: # Suppress during initialization
+                pass # Suppress repetitive message
+            self.efficiency_source_label.setText("Error")
         except ZeroDivisionError:
-            messagebox.showerror("Error", "Nominal voltage, capacity, wheel diameter, or efficiency cannot be zero.")
-        except AttributeError: # Happens if full_charge_range is not yet set
-            self.full_charge_range = 0
-            self.range_unit = "miles"
+            if not self.is_initializing: # Suppress during initialization
+                pass # Suppress repetitive message
+            self.efficiency_source_label.setText("Error")
+        except Exception as e: # Catch any other unexpected errors
+            if not self.is_initializing: # Suppress during initialization
+                QMessageBox.critical(self, "Internal Error", f"An unexpected error occurred during range calculation: {e}")
+            self.efficiency_source_label.setText("Error")
 
     def calculate_charge_time_and_remaining_range(self):
-        current_percentage, _ = self.get_current_battery_percentage() # We only need percentage here
+        """Calculates and displays remaining charge, range, and estimated time to full charge."""
+        # Always clear previous results at the start
+        self.charge_time_label.setText("")
+        self.remaining_charge_percentage_label.setText("")
+        self.remaining_range_label.setText("")
 
+        current_percentage, current_voltage_val = self.get_current_battery_percentage()
+        
+        # Display warning if current battery state is invalid, then return from this function only
         if current_percentage is None:
-            self.charge_time_label.config(text="N/A")
-            self.remaining_charge_percentage_label.config(text="N/A")
-            self.remaining_range_label.config(text="N/A")
+            if not self.is_initializing: # Suppress during initialization
+                pass # Suppress repetitive message
             return
 
         try:
-            nominal_voltage = float(self.voltage_entry.get())
-            capacity_type = self.capacity_type_combo.get()
-            charge_rate = float(self.charge_rate_entry.get())
-            capacity = float(self.capacity_entry.get())
-            
-            min_v, max_v, series_cells = self.get_derived_voltage_range_and_s() # Get S from here
-            if series_cells is None: # Error handled by get_derived_voltage_range_and_s
-                return
+            nominal_voltage_str = self.voltage_entry.text()
+            capacity_type = self.capacity_type_combo.currentText()
+            charge_rate_str = self.charge_rate_entry.text()
+            capacity_str = self.capacity_entry.text()
 
+            nominal_voltage = float(nominal_voltage_str) if nominal_voltage_str else 0.0
+            charge_rate = float(charge_rate_str) if charge_rate_str else 0.0
+            capacity = float(capacity_str) if capacity_str else 0.0
+            
+            # Check for invalid primary inputs that can prevent this entire calculation
+            if nominal_voltage <= 0 or capacity <= 0 or charge_rate <= 0:
+                if not self.is_initializing: # Suppress during initialization
+                    pass # Suppress repetitive message
+                return
 
             capacity_ah = 0
             if capacity_type == "Wh":
@@ -728,345 +1332,348 @@ class BatteryCalculatorGUI:
             else:
                 capacity_ah = capacity
 
-            if charge_rate <= 0:
-                messagebox.showerror("Error", "Charger rate must be a positive number.")
-                self.charge_time_label.config(text="N/A")
-                self.remaining_charge_percentage_label.config(text="N/A")
-                self.remaining_range_label.config(text="N/A")
+            # Ensure capacity_ah is valid before proceeding
+            if capacity_ah <= 0:
+                if not self.is_initializing: # Suppress during initialization
+                    pass # Suppress repetitive message
                 return
 
             remaining_capacity_ah_to_full = capacity_ah * (1 - (current_percentage / 100))
             estimated_charge_time = remaining_capacity_ah_to_full / charge_rate
-            self.charge_time_label.config(text=f"{estimated_charge_time:.2f}")
+            self.charge_time_label.setText(f"{estimated_charge_time:.2f}")
 
-            self.remaining_charge_percentage_label.config(text=f"{100 - current_percentage:.2f}%")
+            self.remaining_charge_percentage_label.setText(f"{100 - current_percentage:.2f}%")
 
-            if hasattr(self, 'full_charge_range'):
+            if hasattr(self, 'full_charge_range') and self.full_charge_range > 0:
                 remaining_range = self.full_charge_range * (current_percentage / 100)
-                self.remaining_range_label.config(text=f"{remaining_range:.2f}")
-                self.remaining_range_unit_label.config(text=self.range_unit)
+                self.remaining_range_label.setText(f"{remaining_range:.2f}")
+                self.remaining_range_unit_label.setText(self.range_unit)
             else:
-                self.remaining_range_label.config(text="N/A")
+                self.remaining_range_label.setText("N/A (Full charge range not available or zero)")
 
         except ValueError:
-            messagebox.showerror("Error", "Invalid input for charging information.")
-            self.charge_time_label.config(text="N/A")
-            self.remaining_charge_percentage_label.config(text="N/A")
-            self.remaining_range_label.config(text="N/A")
+            if not self.is_initializing: # Suppress during initialization
+                pass # Suppress repetitive message
         except ZeroDivisionError:
-            messagebox.showerror("Error", "Nominal voltage or charge rate cannot be zero in these calculations.")
-            self.charge_time_label.config(text="N/A")
-            self.remaining_charge_percentage_label.config(text="N/A")
-            self.remaining_range_label.config(text="N/A")
-
-    def update_settings_on_close(self):
-        # Save the current profile before closing
-        self.save_current_profile() 
-        self.master.destroy()
+            if not self.is_initializing: # Suppress during initialization
+                pass # Suppress repetitive message
+        except Exception as e:
+            if not self.is_initializing: # Suppress during initialization
+                QMessageBox.critical(self, "Internal Error", f"An unexpected error occurred during charge time calculation: {e}")
 
     def clear_fields(self, keep_profile_name=False):
         """Clears all input fields, and output labels.
            If keep_profile_name is True, the profile selection is not reset."""
         # Clear input entries
-        self.voltage_entry.delete(0, tk.END)
-        self.series_cells_entry.delete(0, tk.END) 
-        self.capacity_entry.delete(0, tk.END)
-        self.charge_rate_entry.delete(0, tk.END)
-        self.current_percentage_entry.delete(0, tk.END)
-        self.current_voltage_entry.delete(0, tk.END)
-        self.motor_wattage_entry.delete(0, tk.END)
-        self.wheel_diameter_entry.delete(0, tk.END) 
+        self.voltage_entry.clear()
+        self.series_cells_entry.clear()
+        self.capacity_entry.clear()
+        self.charge_rate_entry.clear()
+        self.charging_duration_combo.setCurrentText("")
+        self.current_percentage_entry.setText("0") # Reset to 0
+        self.current_voltage_entry.clear()
+        self.motor_wattage_entry.clear()
+        self.wheel_diameter_entry.clear()
+        self.preferred_cutoff_entry.setText("25") # NEW: Reset cutoff to default
         
         # Reset comboboxes and radiobuttons to default values
-        self.capacity_type_combo.set("Wh")
-        self.driving_style_combo.set("Casual")
-        self.charge_input_method.set("percentage") 
-        
+        self.capacity_type_combo.setCurrentText("Wh")
+        self.driving_style_combo.setCurrentText("Casual")
+        self.percent_radio.setChecked(True) # Set percentage radio button
+
         # Update visibility and info labels based on cleared/default states
-        self.toggle_charge_input() 
+        self.toggle_charge_input()
         self.update_capacity_label()
         self.update_voltage_info_labels()
 
         # Clear output labels
-        self.calculated_range_label.config(text="")
-        self.remaining_range_label.config(text="")
-        self.remaining_charge_percentage_label.config(text="")
-        self.charge_time_label.config(text="")
-        self.miles_per_wh_label.config(text="")
-        self.miles_per_ah_label.config(text="")
-        self.breakdown_voltage_label.config(text="")
-        self.breakdown_series_cells_label.config(text="") 
-        self.breakdown_min_max_voltage_label.config(text="")
-        self.breakdown_ah_label.config(text="")
-        self.breakdown_wh_label.config(text="")
-        self.breakdown_motor_watts_label.config(text="")
-        self.breakdown_wheel_diameter_label.config(text="") 
-        self.breakdown_charge_rate_label.config(text="")
-        self.breakdown_current_state_percent_label.config(text="")
-        self.breakdown_current_state_voltage_label.config(text="")
+        self.calculated_range_label.setText("")
+        self.remaining_range_label.setText("")
+        self.remaining_charge_percentage_label.setText("")
+        self.charge_time_label.setText("")
+        self.miles_per_wh_label.setText("")
+        self.miles_per_ah_label.setText("")
+        self.percentage_after_charge_label.setText("")
+        self.range_to_cutoff_label.setText("") # NEW: Clear cutoff labels
+        self.charge_time_from_cutoff_label.setText("") # NEW: Clear cutoff labels
+
+        self.breakdown_voltage_label.setText("")
+        self.breakdown_series_cells_label.setText("")
+        self.breakdown_min_max_voltage_label.setText("")
+        self.breakdown_ah_label.setText("N/A") # Reset to N/A
+        self.breakdown_wh_label.setText("N/A") # Reset to N/A
+        self.breakdown_motor_watts_label.setText("")
+        self.breakdown_wheel_diameter_label.setText("")
+        self.breakdown_charge_rate_label.setText("")
+        self.breakdown_charge_duration_label.setText("")
+        self.breakdown_current_state_percent_label.setText("")
+        self.breakdown_current_state_voltage_label.setText("")
+        self.breakdown_preferred_cutoff_label.setText("") # NEW: Clear breakdown cutoff
+        self.breakdown_preferred_cutoff_voltage_label.setText("") # NEW: Clear breakdown cutoff voltage
+        self.efficiency_source_label.setText("Predicted") # Reset efficiency source
+        self.reset_efficiency_source(show_message=False) # Reset the internal flag too, without a message
+        
+        # Clear ride log fields and table on the ride log tab as well
+        self.clear_ride_log_fields()
+        self.update_ride_log_table() # This will clear it if no data is loaded
+        self.calculate_average_efficiency() # This will reset the average label
 
 
-# --- CLI Functionality (Remains single-profile for simplicity) ---
-def get_cli_input(prompt, default_value=None, type_cast=str, validation_func=None, error_message="Invalid input.", default_text_if_none="N/A"):
-    while True:
+    def export_breakdown_to_file(self):
+        """Exports the current breakdown information to a text file."""
+        breakdown_text = "--- Vehicle Breakdown ---\n"
+        breakdown_text += f"Nominal Voltage: {self.breakdown_voltage_label.text()}\n"
+        breakdown_text += f"Cells in Series: {self.breakdown_series_cells_label.text()}\n"
+        breakdown_text += f"Min/Max Voltage (Calculated): {self.breakdown_min_max_voltage_label.text()}\n"
+        breakdown_text += f"Ah: {self.breakdown_ah_label.text()}\n"
+        breakdown_text += f"Wh: {self.breakdown_wh_label.text()}\n"
+        breakdown_text += f"Motor Watts: {self.breakdown_motor_watts_label.text()}\n"
+        breakdown_text += f"Wheel Diameter: {self.breakdown_wheel_diameter_label.text()}\n"
+        breakdown_text += f"Charge Rate: {self.breakdown_charge_rate_label.text()}\n"
+        breakdown_text += f"Charge Duration: {self.breakdown_charge_duration_label.text()}\n"
+        breakdown_text += f"Current State %: {self.breakdown_current_state_percent_label.text()}\n"
+        breakdown_text += f"Current State V: {self.breakdown_current_state_voltage_label.text()}\n"
+        breakdown_text += f"Preferred Cutoff %: {self.breakdown_preferred_cutoff_label.text()}\n" # NEW: Add cutoff to export
+        breakdown_text += f"Preferred Cutoff V: {self.breakdown_preferred_cutoff_voltage_label.text()}\n" # NEW: Add cutoff voltage to export
+        breakdown_text += f"Efficiency Source: {self.efficiency_source_label.text()}\n" # Include efficiency source
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Vehicle Breakdown", "", "Text files (*.txt);;All files (*.*)"
+        )
+
+        if file_path:
+            try:
+                with open(file_path, 'w') as f:
+                    f.write(breakdown_text)
+                QMessageBox.information(self, "Export Successful", f"Breakdown saved to:\n{file_path}")
+            except Exception as e:
+                QMessageBox.critical(self, "Export Error", f"Failed to save breakdown: {e}")
+        else:
+            QMessageBox.information(self, "Export Cancelled", "Breakdown export cancelled.")
+
+    def log_ride(self):
+        """Logs a new ride entry based on the inputs in the Ride Log tab."""
+        ride_date = self.ride_date_edit.dateTime().toString("yyyy-MM-dd HH:mm")
+        
         try:
-            display_default = f" [{default_value if default_value is not None else default_text_if_none}]"
-            user_input = input(f"{prompt}{display_default}: ").strip()
+            distance_miles = float(self.ride_distance_entry.text())
+            if distance_miles <= 0:
+                QMessageBox.warning(self, "Input Error", "Distance must be a positive number.")
+                return
 
-            # Handle empty input with default value
-            if user_input == "" and default_value is not None:
-                user_input = str(default_value) # Ensure default is string for type_cast
-            elif user_input == "" and default_value is None: # If no default and empty, consider it None/empty
-                return None
+            start_state_type = "percentage" if self.ride_start_state_type_combo.currentText() == "Percentage (%)" else "voltage"
+            start_value = float(self.ride_start_value_entry.text())
 
-            value = type_cast(user_input)
-            if validation_func and not validation_func(value):
-                print(error_message)
-                continue
-            return value
+            end_state_type = "percentage" if self.ride_end_state_type_combo.currentText() == "Percentage (%)" else "voltage"
+            end_value = float(self.ride_end_value_entry.text())
+
+            logged_driving_style = self.ride_driving_style_combo.currentText() # Get new riding style input
+
+            notes = self.ride_notes_entry.text().strip()
+
+            # Get battery full capacity from the current profile on the Calculator tab
+            nominal_voltage_str = self.voltage_entry.text()
+            capacity_type = self.capacity_type_combo.currentText()
+            capacity_str = self.capacity_entry.text()
+
+            nominal_voltage = float(nominal_voltage_str) if nominal_voltage_str else 0.0
+            battery_capacity = float(capacity_str) if capacity_str else 0.0
+
+            if nominal_voltage <= 0 or battery_capacity <= 0:
+                QMessageBox.warning(self, "Battery Info Missing", "Please enter valid Nominal Voltage and Battery Capacity in the 'Battery Calculator' tab before logging a ride.")
+                return
+
+            total_battery_wh = battery_capacity if capacity_type == "Wh" else battery_capacity * nominal_voltage
+            
+            # Convert start/end values to percentages (if voltage, use current battery info)
+            min_v, max_v, series_cells = self.get_derived_voltage_range_and_s()
+            if min_v is None or max_v is None or (max_v - min_v) <= 0: # Ensure valid voltage range for conversion
+                QMessageBox.warning(self, "Battery Info Error", "Could not derive min/max voltage from Battery Calculator tab or voltage range is invalid. Please check voltage and series cells inputs.")
+                return
+
+            start_percent = 0.0
+            if start_state_type == "percentage":
+                if not (0 <= start_value <= 100):
+                    QMessageBox.warning(self, "Input Error", "Start percentage must be between 0 and 100.")
+                    return
+                start_percent = start_value
+            else: # voltage
+                if not (min_v <= start_value <= max_v):
+                    QMessageBox.warning(self, "Input Error", f"Start voltage ({start_value}V) is outside expected range ({min_v:.1f}V - {max_v:.1f}V).")
+                    return
+                start_percent = ((start_value - min_v) / (max_v - min_v)) * 100
+
+            end_percent = 0.0
+            if end_state_type == "percentage":
+                if not (0 <= end_value <= 100):
+                    QMessageBox.warning(self, "Input Error", "End percentage must be between 0 and 100.")
+                    return
+                end_percent = end_value
+            else: # voltage
+                if not (min_v <= end_value <= max_v):
+                    QMessageBox.warning(self, "Input Error", f"End voltage ({end_value}V) is outside expected range ({min_v:.1f}V - {max_v:.1f}V).")
+                    return
+                end_percent = ((end_value - min_v) / (max_v - min_v)) * 100
+            
+            if end_percent >= start_percent:
+                QMessageBox.warning(self, "Input Error", "End battery state must be lower than start battery state for a consumed ride.")
+                return
+
+            # Calculate Wh consumed for this ride
+            wh_consumed = total_battery_wh * ((start_percent - end_percent) / 100)
+            
+            if wh_consumed <= 0:
+                 QMessageBox.warning(self, "Calculation Error", "Calculated Wh consumed is zero or negative. Check start/end battery states or battery capacity.")
+                 return
+
+            # Calculate Wh/mile for this specific ride
+            wh_per_mile = wh_consumed / distance_miles
+
+            # Add ride data to the current profile's ride_log
+            ride_data = {
+                "date": ride_date,
+                "distance_miles": distance_miles,
+                "start_state_type": start_state_type,
+                "start_value": start_value,
+                "end_state_type": end_state_type,
+                "end_value": end_value,
+                "start_percent": round(start_percent, 2), # Store calculated percentages for display
+                "end_percent": round(end_percent, 2),
+                "wh_consumed": round(wh_consumed, 2),
+                "wh_per_mile": round(wh_per_mile, 2), # Store for easy display/calculation
+                "riding_style": logged_driving_style, # NEW: Store riding style
+                "notes": notes
+            }
+            
+            # Ensure 'ride_log' exists for the current profile
+            if "ride_log" not in self.all_profiles[self.current_profile_name]:
+                self.all_profiles[self.current_profile_name]["ride_log"] = []
+            
+            self.all_profiles[self.current_profile_name]["ride_log"].append(ride_data)
+            
+            # Update the table and save the profiles
+            self.update_ride_log_table()
+            self.calculate_average_efficiency()
+            self._save_all_profiles_to_file(self.current_profile_name)
+
+            self.clear_ride_log_fields() # Clear input fields after successful log
+            QMessageBox.information(self, "Ride Logged", "Ride successfully logged!")
+
         except ValueError:
-            print(error_message)
-        except KeyboardInterrupt:
-            print("\nExiting CLI calculator.")
-            sys.exit(0)
-
-def run_cli_calculator():
-    print("\n--- Battery Calculator (CLI Mode) ---")
-
-    # Universal cell voltage properties for typical Li-ion e-bike batteries
-    CELL_VOLTAGE_FULL_CLI = 4.2  # Volts per cell at 100% charge
-    CELL_VOLTAGE_EMPTY_CLI = 3.0 # Volts per cell at 0% charge
-    CELL_VOLTAGE_NOMINAL_CLI = 3.7 # Nominal Volts per cell (used for inferring S)
-
-    # Map common nominal pack voltages to their typical number of cells in series (S)
-    NOMINAL_VOLTAGE_TO_SERIES_CELLS_CLI = {
-        36: 10,
-        48: 13,
-        52: 14,
-        60: 16,
-        72: 20,
-    }
-    
-    # Reference Wheel Sizes for Wh/mile interpolation (CLI specific for self-containment)
-    SMALL_WHEEL_REF_CLI = 10.0
-    LARGE_WHEEL_REF_CLI = 27.5
-
-    # Average Wh/mile efficiency based on driving style FOR SMALL AND LARGE WHEELS (CLI specific)
-    # These values are recalibrated based on the user's provided examples.
-    SMALL_WHEEL_EFFICIENCY_CLI = {
-        "Eco": 33.28,       # Updated from Bike 1 (48V*10.4Ah / 15 miles = 33.28 Wh/mile)
-        "Casual": 30.0,     # Kept original
-        "Agressive": 45.0   # Kept original
-    }
-    LARGE_WHEEL_EFFICIENCY_CLI = {
-        "Eco": 41.6,        # Updated from Bike 2 (52V*20Ah / 25 miles = 41.6 Wh/mile)
-        "Casual": 65.0,     # Kept original
-        "Agressive": 80.0   # Kept original
-    }
-
-    # Load settings for default values (CLI still uses the single-profile saving mechanism for simplicity)
-    settings = {}
-    if os.path.exists(SETTINGS_FILE):
-        try:
-            with open(SETTINGS_FILE, 'r') as f:
-                # CLI only cares about the 'Default Profile' or the last active profile data
-                # For simplicity in CLI, we'll extract the 'Default Profile' if it exists,
-                # otherwise it will behave like the original single-profile CLI.
-                loaded_data = json.load(f)
-                profiles_data = loaded_data.get("profiles", {})
-                last_active_profile_name = loaded_data.get("last_active_profile")
-
-                if last_active_profile_name and last_active_profile_name in profiles_data:
-                    settings = profiles_data.get(last_active_profile_name, {})
-                elif "Default Profile" in profiles_data:
-                    settings = profiles_data.get("Default Profile", {})
-                else: # No profiles or no default/last active, use empty settings
-                    settings = {}
-        except Exception as e:
-            print(f"Warning: Failed to load CLI settings: {e}")
-
-    # Use settings for default values, converting to correct types if necessary
-    # Provide sensible defaults if settings are not found
-    default_voltage = settings.get('voltage', '')
-    # Ensure default_voltage is convertable if not empty
-    try: default_voltage = float(default_voltage) if default_voltage else None
-    except ValueError: default_voltage = None
-
-    default_series_cells = settings.get('series_cells', '')
-    try: default_series_cells = int(default_series_cells) if default_series_cells else None
-    except ValueError: default_series_cells = None
-
-    default_capacity = settings.get('capacity', '')
-    try: default_capacity = float(default_capacity) if default_capacity else None
-    except ValueError: default_capacity = None
-
-    default_charge_rate = settings.get('charge_rate', '')
-    try: default_charge_rate = float(default_charge_rate) if default_charge_rate else None
-    except ValueError: default_charge_rate = None
-
-    default_motor_wattage = settings.get('motor_wattage', '')
-    try: default_motor_wattage = float(default_motor_wattage) if default_motor_wattage else None
-    except ValueError: default_motor_wattage = None
-
-    default_wheel_diameter = settings.get('wheel_diameter', '')
-    try: default_wheel_diameter = float(default_wheel_diameter) if default_wheel_diameter else None
-    except ValueError: default_wheel_diameter = None
-
-    default_current_percentage = settings.get('current_percentage', "0")
-    try: default_current_percentage = float(default_current_percentage) if default_current_percentage else 0.0 # Default to 0.0 if cannot convert
-    except ValueError: default_current_percentage = 0.0
-
-    default_current_voltage = settings.get('current_voltage', '')
-    try: default_current_voltage = float(default_current_voltage) if default_current_voltage else None
-    except ValueError: default_current_voltage = None
-
-    default_capacity_type = settings.get('capacity_type', 'Wh')
-    default_driving_style = settings.get('driving_style', 'Casual')
-    default_charge_input_method = settings.get('charge_input_method', 'percentage')
-
-    # --- Input Gathering ---
-    nominal_voltage = get_cli_input("Enter Battery Nominal Voltage (V, e.g., 48, 52)", default_voltage, float, 
-                                    lambda x: x > 0, "Nominal voltage must be a positive number.")
-    
-    series_cells = None
-    if nominal_voltage is not None:
-        series_cells = NOMINAL_VOLTAGE_TO_SERIES_CELLS_CLI.get(int(round(nominal_voltage)))
-
-    if series_cells is None:
-        print(f"Nominal voltage {nominal_voltage}V not recognized in common types. Please enter Cells in Series (S).")
-        series_cells = get_cli_input("Enter Number of Cells in Series (S)", default_series_cells, int, 
-                                     lambda x: x > 0, "Number of series cells must be a positive integer.")
-        if series_cells is None: # User didn't provide S when prompted
-             print("Error: Cells in Series (S) is required for accurate calculations.")
-             sys.exit(1)
-    
-    # Calculate min/max voltage based on series cells
-    min_battery_voltage_for_calc = series_cells * CELL_VOLTAGE_EMPTY_CLI
-    max_battery_voltage_for_calc = series_cells * CELL_VOLTAGE_FULL_CLI
-    print(f"Calculated battery range based on {series_cells}S: Empty {min_battery_voltage_for_calc:.1f}V to Full {max_battery_voltage_for_calc:.1f}V.")
-
-    capacity_type = get_cli_input("Enter Capacity Type (Wh/Ah)", default_capacity_type, str, 
-                                lambda x: x.lower() in ["wh", "ah"], "Invalid capacity type. Please enter 'Wh' or 'Ah'.").lower()
-    
-    capacity = get_cli_input(f"Enter Battery Capacity ({capacity_type})", default_capacity, float, 
-                             lambda x: x > 0, "Capacity must be a positive number.")
-    
-    charge_rate = get_cli_input("Enter Charger Rate (A)", default_charge_rate, float, 
-                                lambda x: x > 0, "Charger rate must be a positive number.")
-    
-    charge_input_method = get_cli_input("Enter Battery State Input Method (percentage/voltage)", default_charge_input_method, str, 
-                                        lambda x: x.lower() in ["percentage", "voltage"], "Invalid input method. Enter 'percentage' or 'voltage'.").lower()
-
-    current_percentage = None
-    current_voltage = None
-
-    if charge_input_method == "percentage":
-        current_percentage = get_cli_input("Enter Current Percentage (%)", default_current_percentage, float, 
-                                           lambda x: 0 <= x <= 100, "Current percentage must be between 0 and 100.")
-        if current_percentage is not None and max_battery_voltage_for_calc > min_battery_voltage_for_calc:
-            current_voltage = min_battery_voltage_for_calc + (current_percentage / 100) * (max_battery_voltage_for_calc - min_battery_voltage_for_calc)
-    else: # voltage
-        current_voltage = get_cli_input("Enter Current Voltage (V)", default_current_voltage, float, 
-                                       lambda x: x >= 0, "Current voltage cannot be negative.")
-        if current_voltage is not None:
-            if max_battery_voltage_for_calc <= min_battery_voltage_for_calc:
-                print("Warning: Cannot calculate percentage from voltage (Calculated min/max voltage range is invalid).")
-                current_percentage = None
-            else:
-                if not (min_battery_voltage_for_calc <= current_voltage <= max_battery_voltage_for_calc):
-                    print(f"Warning: Current voltage {current_voltage:.1f}V is outside the typical calculated range [{min_battery_voltage_for_calc:.1f}V - {max_battery_voltage_for_calc:.1f}V].")
-                
-                percentage = ((current_voltage - min_battery_voltage_for_calc) / (max_battery_voltage_for_calc - min_battery_voltage_for_calc)) * 100
-                current_percentage = max(0, min(100, percentage)) # Clamp
-
-    motor_wattage = get_cli_input("Enter Motor Wattage (W)", default_motor_wattage, float, 
-                                   lambda x: x > 0, "Motor wattage must be a positive number.")
-    
-    wheel_diameter = get_cli_input("Enter Wheel Diameter (inches)", default_wheel_diameter, float,
-                                    lambda x: x > 0, "Wheel diameter must be a positive number.")
-
-    driving_style = get_cli_input("Enter Driving Style (Agressive/Casual/Eco)", default_driving_style, str, 
-                                   lambda x: x.lower() in ["agressive", "casual", "eco"], "Invalid driving style. Please enter 'Agressive', 'Casual', or 'Eco'.").capitalize() # Capitalize for consistency
-
-    # Perform calculations
-    total_energy_wh = 0
-    total_capacity_ah = 0
-
-    if capacity_type == "wh":
-        total_energy_wh = capacity
-        try:
-            total_capacity_ah = total_energy_wh / nominal_voltage # Use nominal_voltage for this
+            QMessageBox.critical(self, "Input Error", "Please enter valid numeric values for Distance and Battery States.")
         except ZeroDivisionError:
-            total_capacity_ah = 0
-    else:  # capacity_type == "ah"
-        total_capacity_ah = capacity
-        total_energy_wh = capacity * nominal_voltage # Use nominal_voltage for this
+            QMessageBox.critical(self, "Error Logging Ride", "Division by zero. Check battery capacity or voltage range in Calculator tab.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error Logging Ride", f"An unexpected error occurred: {e}")
 
-    # --- UPDATED RANGE CALCULATION WITH WHEEL DIAMETER ---
-    interpolation_factor = (wheel_diameter - SMALL_WHEEL_REF_CLI) / (LARGE_WHEEL_REF_CLI - SMALL_WHEEL_REF_CLI)
-    interpolation_factor = max(0.0, min(1.0, interpolation_factor)) # Clamp between 0 and 1
+    def clear_ride_log_fields(self):
+        """Clears the input fields for a new ride entry."""
+        self.ride_date_edit.setDateTime(QDateTime.currentDateTime())
+        self.ride_distance_entry.clear()
+        self.ride_start_value_entry.clear()
+        self.ride_end_value_entry.clear()
+        self.ride_notes_entry.clear()
+        self.ride_start_state_type_combo.setCurrentIndex(0) # Reset to Percentage
+        self.ride_end_state_type_combo.setCurrentIndex(0) # Reset to Percentage
+        self.ride_driving_style_combo.setCurrentText("Casual") # Reset riding style to default
 
-    base_wh_per_mile_small = SMALL_WHEEL_EFFICIENCY_CLI.get(driving_style)
-    base_wh_per_mile_large = LARGE_WHEEL_EFFICIENCY_CLI.get(driving_style)
+    def update_ride_log_table(self):
+        """Populates the QTableWidget with ride data from the current profile."""
+        self.ride_log_table.setRowCount(0) # Clear existing rows
+        current_profile_log = self.all_profiles.get(self.current_profile_name, {}).get("ride_log", [])
 
-    if base_wh_per_mile_small is None or base_wh_per_mile_large is None:
-        print("Error: Could not determine valid Wh/mile efficiency for the selected driving style.")
-        sys.exit(1)
+        self.ride_log_table.setRowCount(len(current_profile_log))
+        for row_idx, ride in enumerate(current_profile_log):
+            self.ride_log_table.setItem(row_idx, 0, QTableWidgetItem(ride.get("date", "N/A")))
+            self.ride_log_table.setItem(row_idx, 1, QTableWidgetItem(f"{ride.get('distance_miles', 0):.2f}"))
+            self.ride_log_table.setItem(row_idx, 2, QTableWidgetItem(f"{ride.get('start_percent', 0):.2f}%"))
+            self.ride_log_table.setItem(row_idx, 3, QTableWidgetItem(f"{ride.get('end_percent', 0):.2f}%"))
+            self.ride_log_table.setItem(row_idx, 4, QTableWidgetItem(f"{ride.get('wh_consumed', 0):.2f}"))
+            self.ride_log_table.setItem(row_idx, 5, QTableWidgetItem(f"{ride.get('wh_per_mile', 0):.2f}"))
+            self.ride_log_table.setItem(row_idx, 6, QTableWidgetItem(ride.get("riding_style", "N/A"))) # NEW: Set Riding Style
+            self.ride_log_table.setItem(row_idx, 7, QTableWidgetItem(ride.get("notes", ""))) # Shifted to column 7
 
-    adjusted_wh_per_mile = (base_wh_per_mile_small * (1 - interpolation_factor) +
-                           base_wh_per_mile_large * interpolation_factor)
+        # Adjust column widths to content
+        self.ride_log_table.resizeColumnsToContents()
 
-    if adjusted_wh_per_mile <= 0:
-        print("Error: Calculated efficiency (Wh/mile) must be greater than zero.")
-        sys.exit(1)
+    def delete_selected_rides(self):
+        """Deletes the selected ride(s) from the current profile's log."""
+        selected_rows = sorted(set(index.row() for index in self.ride_log_table.selectedIndexes()), reverse=True)
+        
+        if not selected_rows:
+            QMessageBox.information(self, "No Selection", "Please select at least one ride to delete.")
+            return
 
-    estimated_range = total_energy_wh / adjusted_wh_per_mile
-    calculated_unit = "miles" # Assuming miles for range
+        reply = QMessageBox.question(self, "Confirm Delete",
+                                     f"Are you sure you want to delete {len(selected_rows)} selected ride(s)?",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
 
-    miles_per_wh = 1 / adjusted_wh_per_mile
-    miles_per_ah = nominal_voltage / adjusted_wh_per_mile if adjusted_wh_per_mile > 0 else 0
+        if reply == QMessageBox.StandardButton.Yes:
+            current_log = self.all_profiles[self.current_profile_name].get("ride_log", [])
+            for row_idx in selected_rows:
+                if 0 <= row_idx < len(current_log):
+                    current_log.pop(row_idx)
+            
+            self.all_profiles[self.current_profile_name]["ride_log"] = current_log
+            self.update_ride_log_table()
+            self.calculate_average_efficiency()
+            self._save_all_profiles_to_file(self.current_profile_name)
+            QMessageBox.information(self, "Deleted", f"{len(selected_rows)} ride(s) deleted.")
 
-    remaining_capacity_ah_to_full = total_capacity_ah * (1 - (current_percentage / 100)) if current_percentage is not None else 0
-    estimated_charge_time = remaining_capacity_ah_to_full / charge_rate if charge_rate > 0 else 0
-    
-    remaining_charge_percentage = 100 - current_percentage if current_percentage is not None else "N/A"
-    remaining_range = estimated_range * (current_percentage / 100) if current_percentage is not None else "N/A"
+    def calculate_average_efficiency(self):
+        """Calculates the average Wh/mile and Miles/Wh from all logged rides in the current profile."""
+        current_profile_log = self.all_profiles.get(self.current_profile_name, {}).get("ride_log", [])
+        
+        total_wh_consumed = 0.0
+        total_distance_miles = 0.0
 
+        for ride in current_profile_log:
+            try:
+                wh = float(ride.get("wh_consumed", 0))
+                dist = float(ride.get("distance_miles", 0))
+                total_wh_consumed += wh
+                total_distance_miles += dist
+            except (ValueError, TypeError):
+                # Skip invalid entries, but could log a warning if needed
+                continue
 
-    print("\n--- Results ---")
-    print(f"Estimated Range: {estimated_range:.2f} {calculated_unit}")
-    print(f"Remaining Range: {remaining_range:.2f} {calculated_unit}")
-    print(f"Remaining Charge: {remaining_charge_percentage:.2f}%" if current_percentage is not None else "Remaining Charge: N/A")
-    print(f"Estimated Charge Time: {estimated_charge_time:.2f} hours")
-    print(f"Miles/Wh (Adjusted): {miles_per_wh:.2f}")
-    print(f"Miles/Ah (Adjusted): {miles_per_ah:.2f}")
+        if total_distance_miles > 0:
+            average_wh_per_mile = total_wh_consumed / total_distance_miles
+            average_miles_per_wh = 1 / average_wh_per_mile
+            self.average_wh_per_mile_label.setText(f"Average Wh/mile: {average_wh_per_mile:.2f}")
+            self.average_miles_per_wh_label.setText(f"Average Miles/Wh: {average_miles_per_wh:.2f}")
+            self.logged_wh_per_mile_average = average_wh_per_mile # Store for apply function
+        else:
+            self.average_wh_per_mile_label.setText("Average Wh/mile: N/A (No rides logged or invalid data)")
+            self.average_miles_per_wh_label.setText("Average Miles/Wh: N/A (No rides logged or invalid data)")
+            self.logged_wh_per_mile_average = 0.0 # Reset stored average
 
-    print("\n--- Breakdown ---")
-    print(f"Nominal Voltage: {nominal_voltage:.1f}V")
-    print(f"Cells in Series (S): {series_cells}")
-    print(f"Min/Max Voltage (Calculated 0%/100%): {min_battery_voltage_for_calc:.1f}V - {max_battery_voltage_for_calc:.1f}V")
-    print(f"Ah: {total_capacity_ah:.2f}Ah")
-    print(f"Wh: {total_energy_wh:.2f}Wh")
-    print(f"Motor Watts: {motor_wattage:.2f}W")
-    print(f"Wheel Diameter: {wheel_diameter:.1f} inches")
-    print(f"Charge Rate: {charge_rate:.2f}A")
-    print(f"Current State Percentage: {current_percentage:.2f}%" if current_percentage is not None else "Current State Percentage: N/A")
-    print(f"Current State Voltage: {current_voltage:.2f}V" if current_voltage is not None else "Current State Voltage: N/A")
-    print("\n🚲🔋🛴")
-    print("Made by Adam of Gobytego") # Added attribution for CLI
+    def apply_logged_efficiency_to_calculator(self):
+        """Applies the calculated average Wh/mile from the ride log to the calculator tab."""
+        if self.logged_wh_per_mile_average > 0:
+            self.use_logged_efficiency = True
+            QMessageBox.information(self, "Efficiency Applied",
+                                    f"Average efficiency ({self.logged_wh_per_mile_average:.2f} Wh/mile) from logged rides will now be used for range calculations on the Battery Calculator tab.")
+            self.calculate_all() # Recalculate range with the new efficiency
+        else:
+            QMessageBox.warning(self, "No Logged Data",
+                                "No valid logged ride data available to calculate an average efficiency. Please log some rides first.")
+            self.use_logged_efficiency = False
+            self.efficiency_source_label.setText("Predicted") # Ensure label reflects this
+
+    def reset_efficiency_source(self, show_message=True):
+        """Resets the calculator to use predicted efficiency (based on driving style/wheel diameter).
+           'show_message' controls whether a QMessageBox is displayed."""
+        self.use_logged_efficiency = False
+        self.logged_wh_per_mile_average = 0.0
+        self.efficiency_source_label.setText("Predicted")
+        self.calculate_all() # Recalculate range with predicted efficiency
+        if show_message:
+            QMessageBox.information(self, "Efficiency Reset", "Calculator is now using predicted efficiency based on driving style.")
 
 
 if __name__ == "__main__":
-    if "--cli" in sys.argv:
-        run_cli_calculator()
-    else:
-        # Check if a display is available for GUI
-        if os.environ.get('DISPLAY') is None and sys.platform.startswith('linux'):
-            print("Error: No display found. This application requires a graphical environment.")
-            print("If you are using SSH, you may need to enable X11 forwarding, or run with the --cli flag.")
-            sys.exit(1)
-
-        root = tk.Tk()
-        app = BatteryCalculatorGUI(root)
-        root.protocol("WM_DELETE_WINDOW", app.update_settings_on_close)
-        root.mainloop()
+    app = QApplication(sys.argv)
+    window = BatteryCalculatorGUI()
+    window.show()
+    sys.exit(app.exec())
