@@ -10,7 +10,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer, QDateTime
 
-SETTINGS_FILE = "battery_calculator_settings.json"
+# Changed settings file name
+SETTINGS_FILE = "BatteryUtils_Settings.json"
 
 class BatteryCalculatorGUI(QWidget):
     # Universal cell voltage properties for typical Li-ion e-bike batteries
@@ -49,8 +50,9 @@ class BatteryCalculatorGUI(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Battery Calculator")
-        self.setGeometry(100, 100, 950, 750) # x, y, width, height for the window, adjusted for tabs
+        # Changed window title to reflect "BatteryUtils" and version number
+        self.setWindowTitle("BatteryUtils v1.06.03")
+        self.setGeometry(100, 100, 1200, 750) # x, y, width, height for the window, adjusted for three columns
 
         # Store all profiles loaded from the settings file
         self.all_profiles = {}
@@ -63,6 +65,50 @@ class BatteryCalculatorGUI(QWidget):
 
         # New flag to suppress QMessageBox during initial load
         self.is_initializing = True 
+
+        # Initialize labels that are cleared early to avoid AttributeError
+        # These need to exist before clear_fields is called in load_profile_data
+        self.calculated_range_label = QLabel("")
+        self.remaining_range_label = QLabel("")
+        self.remaining_charge_percentage_label = QLabel("")
+        self.charge_time_label = QLabel("")
+        self.miles_per_wh_label = QLabel("")
+        self.miles_per_ah_label = QLabel("")
+        self.percentage_after_charge_label = QLabel("")
+        self.range_to_cutoff_label = QLabel("")
+        self.charge_time_from_cutoff_label = QLabel("")
+        self.current_state_percent_result_label = QLabel("")
+        self.current_state_voltage_result_label = QLabel("")
+        self.results_charge_duration_label = QLabel("")
+        self.calculated_range_unit_label = QLabel("miles") # Also explicitly initialize these
+        self.remaining_range_unit_label = QLabel("miles")
+        self.range_to_cutoff_unit_label = QLabel("miles")
+
+        # Initialize breakdown labels to avoid AttributeError
+        self.breakdown_voltage_label = QLabel("")
+        self.breakdown_series_cells_label = QLabel("")
+        self.breakdown_min_max_voltage_label = QLabel("")
+        self.breakdown_ah_label = QLabel("N/A")
+        self.breakdown_wh_label = QLabel("N/A")
+        self.breakdown_motor_watts_label = QLabel("")
+        self.breakdown_wheel_diameter_label = QLabel("")
+        self.breakdown_charge_rate_label = QLabel("")
+        self.breakdown_preferred_cutoff_label = QLabel("")
+        self.breakdown_preferred_cutoff_voltage_label = QLabel("")
+        self.efficiency_source_label = QLabel("Predicted") # Also initialized here as it's modified early
+
+        # New label for the dynamically updated "Range to cutoff of XX%:" text
+        self.range_to_cutoff_title_label = QLabel("Range to cutoff of:")
+
+        # NEW: Labels for Last Ride Results in Breakdown
+        self.breakdown_last_ride_date_label = QLabel("N/A")
+        self.breakdown_last_ride_distance_label = QLabel("N/A")
+        self.breakdown_last_ride_wh_label = QLabel("N/A")
+        self.breakdown_last_ride_wh_per_mile_label = QLabel("N/A")
+        
+        # Instance variable to hold the last ride data for persistence
+        self.last_ride_data = {}
+
 
         self.init_ui()
 
@@ -82,29 +128,40 @@ class BatteryCalculatorGUI(QWidget):
         self.tab_widget = QTabWidget()
         main_v_layout.addWidget(self.tab_widget)
 
-        # --- Tab 1: Battery Calculator (Existing content) ---
+        # --- Tab 1: Battery Calculator ---
         self.calculator_tab = QWidget()
-        calculator_tab_layout = QHBoxLayout(self.calculator_tab) # Horizontal layout within the calculator tab
+        # This QHBoxLayout will hold the three main columns: Input, Results, Breakdown
+        self.calculator_tab_main_h_layout = QHBoxLayout(self.calculator_tab) 
 
-        # Input Section Frame (moved inside calculator_tab)
+        # --- Column 1: Input Section ---
         self.input_frame = QFrame(self.calculator_tab)
         self.input_layout = QGridLayout(self.input_frame)
         self.input_frame.setLayout(self.input_layout)
         self.input_frame.setFrameShape(QFrame.Shape.StyledPanel)
         self.input_frame.setFrameShadow(QFrame.Shadow.Raised)
+        self.calculator_tab_main_h_layout.addWidget(self.input_frame, 2) # Add to main horizontal layout, changed from 1 to 2
 
-        # Results Section Frame (moved inside calculator_tab)
-        self.results_frame = QFrame(self.calculator_tab)
-        self.results_layout = QGridLayout(self.results_frame)
-        self.results_frame.setLayout(self.results_layout)
-        self.results_frame.setFrameShape(QFrame.Shape.StyledPanel)
-        self.results_frame.setFrameShadow(QFrame.Shadow.Raised)
+        # --- Column 2: Results Section ---
+        self.results_display_frame = QFrame(self.calculator_tab)
+        self.results_display_layout = QVBoxLayout(self.results_display_frame) # Vertical layout inside this frame
+        self.results_display_frame.setLayout(self.results_display_layout)
+        self.results_display_frame.setFrameShape(QFrame.Shape.StyledPanel)
+        self.results_display_frame.setFrameShadow(QFrame.Shadow.Raised)
+        self.calculator_tab_main_h_layout.addWidget(self.results_display_frame, 2) # Add to main horizontal layout, changed from 1 to 2
 
-        calculator_tab_layout.addWidget(self.input_frame, 1) # Stretch factor 1
-        calculator_tab_layout.addWidget(self.results_frame, 1) # Stretch factor 1
+        # --- Column 3: Breakdown Section ---
+        self.breakdown_display_frame = QFrame(self.calculator_tab)
+        self.breakdown_display_layout = QVBoxLayout(self.breakdown_display_frame) # Vertical layout inside this frame
+        self.breakdown_display_frame.setLayout(self.breakdown_display_layout)
+        self.breakdown_display_frame.setFrameShape(QFrame.Shape.StyledPanel)
+        self.breakdown_display_frame.setFrameShadow(QFrame.Shadow.Raised)
+        # Adjusted stretch factor for the breakdown column to make it narrower
+        self.calculator_tab_main_h_layout.addWidget(self.breakdown_display_frame, 1) # Changed from 0.5 to 1
+
+        # Add the calculator tab to the main tab widget
         self.tab_widget.addTab(self.calculator_tab, "Battery Calculator")
 
-        # --- Tab 2: Ride Log ---
+        # --- Tab 2: Ride Log (Existing content) ---
         self.ride_log_tab = QWidget()
         self.ride_log_main_layout = QVBoxLayout(self.ride_log_tab)
         self.init_ride_log_ui() # Call method to build ride log UI
@@ -221,6 +278,7 @@ class BatteryCalculatorGUI(QWidget):
         # NEW: Preferred Low Battery Cutoff
         self.charging_layout.addWidget(QLabel("Preferred Cutoff (%):"), 4, 0)
         self.preferred_cutoff_entry = QLineEdit("25") # Default to 25%
+        self.preferred_cutoff_entry.textChanged.connect(self.calculate_all) # Recalculate on cutoff change
         self.charging_layout.addWidget(self.preferred_cutoff_entry, 4, 1)
 
 
@@ -236,17 +294,19 @@ class BatteryCalculatorGUI(QWidget):
 
         self.motor_bike_layout.addWidget(QLabel("Wheel Diameter (in):"), 1, 0)
         self.wheel_diameter_entry = QLineEdit()
+        self.wheel_diameter_entry.textChanged.connect(self.calculate_all) # Recalculate if wheel diameter changes
         self.motor_bike_layout.addWidget(self.wheel_diameter_entry, 1, 1)
 
         self.motor_bike_layout.addWidget(QLabel("Driving Style:"), 2, 0)
         self.driving_style_combo = QComboBox()
         self.driving_style_combo.addItems(["Agressive", "Casual", "Eco"])
+        self.driving_style_combo.currentTextChanged.connect(self.calculate_all) # Recalculate if driving style changes
         self.driving_style_combo.setCurrentText("Casual") # Default for new profiles
         self.motor_bike_layout.addWidget(self.driving_style_combo, 2, 1)
 
         self.input_layout.addWidget(self.motor_bike_group_box, 3, 0, 1, 2)
 
-        # --- Buttons ---
+        # --- Buttons (at the bottom of Input Column) ---
         self.buttons_h_layout = QHBoxLayout()
         calculate_button = QPushButton("Calculate")
         calculate_button.clicked.connect(self.calculate_all)
@@ -280,62 +340,77 @@ class BatteryCalculatorGUI(QWidget):
         self.input_layout.addLayout(self.buttons_h_layout, 4, 0, 1, 2)
 
 
-        # --- Output Labels (Results) ---
-        self.results_group_box = QGroupBox("--- Results ---")
-        self.results_group_layout = QGridLayout(self.results_group_box)
+        # --- Output Labels (Results Column) ---
+        # Main results container uses QVBoxLayout
+        # This will hold multiple QGroupBoxes
 
-        self.results_group_layout.addWidget(QLabel("Estimated Range (100%):"), 0, 0)
-        self.calculated_range_label = QLabel("")
-        self.results_group_layout.addWidget(self.calculated_range_label, 0, 1)
-        self.calculated_range_unit_label = QLabel("miles")
-        self.results_group_layout.addWidget(self.calculated_range_unit_label, 0, 2)
+        # 1. Range Group Box
+        self.range_group_box = QGroupBox("-- Range --")
+        self.range_layout = QGridLayout(self.range_group_box)
+        self.results_display_layout.addWidget(self.range_group_box)
 
-        self.results_group_layout.addWidget(QLabel("Remaining Range (to 0%):"), 1, 0)
-        self.remaining_range_label = QLabel("")
-        self.results_group_layout.addWidget(self.remaining_range_label, 1, 1)
-        self.remaining_range_unit_label = QLabel("miles")
-        self.results_group_layout.addWidget(self.remaining_range_unit_label, 1, 2)
+        self.range_layout.addWidget(QLabel("Estimated Full Range:"), 0, 0)
+        self.range_layout.addWidget(self.calculated_range_label, 0, 1)
+        self.range_layout.addWidget(self.calculated_range_unit_label, 0, 2)
 
-        self.results_group_layout.addWidget(QLabel("Remaining Charge (% to 0%):"), 2, 0)
-        self.remaining_charge_percentage_label = QLabel("")
-        self.results_group_layout.addWidget(self.remaining_charge_percentage_label, 2, 1)
+        self.range_layout.addWidget(QLabel("Remaining Range:"), 1, 0)
+        self.range_layout.addWidget(self.remaining_range_label, 1, 1)
+        self.range_layout.addWidget(self.remaining_range_unit_label, 1, 2)
 
-        self.results_group_layout.addWidget(QLabel("Percentage after Charge:"), 3, 0)
-        self.percentage_after_charge_label = QLabel("")
-        self.results_group_layout.addWidget(self.percentage_after_charge_label, 3, 1)
+        # Updated label for Range to Cutoff
+        # Using self.range_to_cutoff_title_label created in __init__
+        self.range_layout.addWidget(self.range_to_cutoff_title_label, 2, 0) # Use the new dynamic label
+        self.range_layout.addWidget(self.range_to_cutoff_label, 2, 1)
+        self.range_layout.addWidget(self.range_to_cutoff_unit_label, 2, 2)
 
-        self.results_group_layout.addWidget(QLabel("Estimated Charge Time (to 100%):"), 4, 0)
-        self.charge_time_label = QLabel("")
-        self.results_group_layout.addWidget(self.charge_time_label, 4, 1)
-        self.results_group_layout.addWidget(QLabel("hours"), 4, 2)
-        
-        # NEW: Range to Preferred Cutoff
-        self.results_group_layout.addWidget(QLabel("Range to Cutoff:"), 5, 0)
-        self.range_to_cutoff_label = QLabel("")
-        self.results_group_layout.addWidget(self.range_to_cutoff_label, 5, 1)
-        self.results_group_layout.addWidget(QLabel("miles"), 5, 2)
 
-        # NEW: Charge Time from Preferred Cutoff
-        self.results_group_layout.addWidget(QLabel("Charge Time from Cutoff:"), 6, 0)
-        self.charge_time_from_cutoff_label = QLabel("")
-        self.results_group_layout.addWidget(self.charge_time_from_cutoff_label, 6, 1)
-        self.results_group_layout.addWidget(QLabel("hours"), 6, 2)
+        # 2. State Group Box
+        self.state_group_box = QGroupBox("-- State --")
+        self.state_layout = QGridLayout(self.state_group_box)
+        self.results_display_layout.addWidget(self.state_group_box)
 
-        self.results_group_layout.addWidget(QLabel("Miles/Wh (Adjusted):"), 7, 0)
-        self.miles_per_wh_label = QLabel("")
-        self.results_group_layout.addWidget(self.miles_per_wh_label, 7, 1)
+        self.state_layout.addWidget(QLabel("Current %:"), 0, 0)
+        self.state_layout.addWidget(self.current_state_percent_result_label, 0, 1)
+        self.state_layout.addWidget(QLabel("%"), 0, 2)
 
-        self.results_group_layout.addWidget(QLabel("Miles/Ah (Adjusted):"), 8, 0)
-        self.miles_per_ah_label = QLabel("")
-        self.results_group_layout.addWidget(self.miles_per_ah_label, 8, 1)
+        self.state_layout.addWidget(QLabel("Current V:"), 1, 0)
+        self.state_layout.addWidget(self.current_state_voltage_result_label, 1, 1)
+        self.state_layout.addWidget(QLabel("V"), 1, 2)
 
-        # New: Efficiency Source Indicator
-        self.results_group_layout.addWidget(QLabel("Efficiency Source:"), 9, 0)
-        self.efficiency_source_label = QLabel("Predicted")
+        # 3. Charge Group Box
+        self.charge_group_box = QGroupBox("-- Charge --")
+        self.charge_layout = QGridLayout(self.charge_group_box)
+        self.results_display_layout.addWidget(self.charge_group_box)
+
+        self.charge_layout.addWidget(QLabel("Remaining Charge to 100%:"), 0, 0)
+        self.charge_layout.addWidget(self.remaining_charge_percentage_label, 0, 1)
+        self.charge_layout.addWidget(QLabel("%"), 0, 2)
+
+        self.charge_layout.addWidget(QLabel("Estimated Charge Time to 100%:"), 1, 0)
+        self.charge_layout.addWidget(self.charge_time_label, 1, 1)
+
+        self.charge_layout.addWidget(QLabel("Charge Duration:"), 2, 0)
+        self.charge_layout.addWidget(self.results_charge_duration_label, 2, 1)
+
+        self.charge_layout.addWidget(QLabel("Percentage after set charge duration:"), 3, 0)
+        self.charge_layout.addWidget(self.percentage_after_charge_label, 3, 1)
+        self.charge_layout.addWidget(QLabel("%"), 3, 2)
+
+        # 4. Other Group Box
+        self.other_group_box = QGroupBox("-- Other --")
+        self.other_layout = QGridLayout(self.other_group_box)
+        self.results_display_layout.addWidget(self.other_group_box)
+
+        self.other_layout.addWidget(QLabel("Miles/Wh:"), 0, 0)
+        self.other_layout.addWidget(self.miles_per_wh_label, 0, 1)
+
+        self.other_layout.addWidget(QLabel("Miles/Ah:"), 1, 0)
+        self.other_layout.addWidget(self.miles_per_ah_label, 1, 1)
+
+        self.other_layout.addWidget(QLabel("Efficiency Source:"), 2, 0)
         self.efficiency_source_label.setStyleSheet("font-style: italic; color: #555;")
-        self.results_group_layout.addWidget(self.efficiency_source_label, 9, 1, 1, 2)
+        self.other_layout.addWidget(self.efficiency_source_label, 2, 1, 1, 2)
 
-        # New: Reset Efficiency Button
         self.reset_efficiency_button = QPushButton("Reset Efficiency")
         self.reset_efficiency_button.clicked.connect(self.reset_efficiency_source)
         self.reset_efficiency_button.setStyleSheet(
@@ -351,78 +426,92 @@ class BatteryCalculatorGUI(QWidget):
             "   background-color: #ec971f;"
             "}"
         )
-        self.results_group_layout.addWidget(self.reset_efficiency_button, 10, 0, 1, 3, Qt.AlignmentFlag.AlignRight)
+        self.other_layout.addWidget(self.reset_efficiency_button, 3, 0, 1, 3, Qt.AlignmentFlag.AlignRight)
 
 
-        self.results_layout.addWidget(self.results_group_box, 0, 0, 1, 2)
-
-
-        # --- Breakdown Column ---
+        # --- Breakdown Column (placed in breakdown_display_layout) ---
         self.breakdown_group_box = QGroupBox("--- Breakdown ---")
-        self.breakdown_group_layout = QGridLayout(self.breakdown_group_box)
+        self.breakdown_group_layout = QGridLayout(self.breakdown_group_box) # Layout for content WITHIN the breakdown group box
 
         self.breakdown_group_layout.addWidget(QLabel("Nominal Voltage:"), 0, 0)
-        self.breakdown_voltage_label = QLabel("")
         self.breakdown_group_layout.addWidget(self.breakdown_voltage_label, 0, 1)
 
         self.breakdown_group_layout.addWidget(QLabel("Cells in Series (S):"), 1, 0)
-        self.breakdown_series_cells_label = QLabel("")
         self.breakdown_group_layout.addWidget(self.breakdown_series_cells_label, 1, 1)
 
         self.breakdown_group_layout.addWidget(QLabel("Min/Max Voltage (Calculated):"), 2, 0)
-        self.breakdown_min_max_voltage_label = QLabel("")
         self.breakdown_group_layout.addWidget(self.breakdown_min_max_voltage_label, 2, 1)
 
         self.breakdown_group_layout.addWidget(QLabel("Ah:"), 3, 0)
-        self.breakdown_ah_label = QLabel("")
         self.breakdown_group_layout.addWidget(self.breakdown_ah_label, 3, 1)
 
         self.breakdown_group_layout.addWidget(QLabel("Wh:"), 4, 0)
-        self.breakdown_wh_label = QLabel("")
         self.breakdown_group_layout.addWidget(self.breakdown_wh_label, 4, 1)
 
         self.breakdown_group_layout.addWidget(QLabel("Motor Watts:"), 5, 0)
-        self.breakdown_motor_watts_label = QLabel("")
         self.breakdown_group_layout.addWidget(self.breakdown_motor_watts_label, 5, 1)
 
         self.breakdown_group_layout.addWidget(QLabel("Wheel Diameter:"), 6, 0)
-        self.breakdown_wheel_diameter_label = QLabel("")
         self.breakdown_group_layout.addWidget(self.breakdown_wheel_diameter_label, 6, 1)
 
         self.breakdown_group_layout.addWidget(QLabel("Charge Rate:"), 7, 0)
-        self.breakdown_charge_rate_label = QLabel("")
         self.breakdown_group_layout.addWidget(self.breakdown_charge_rate_label, 7, 1)
-
-        self.breakdown_group_layout.addWidget(QLabel("Charge Duration:"), 8, 0)
-        self.breakdown_charge_duration_label = QLabel("")
-        self.breakdown_group_layout.addWidget(self.breakdown_charge_duration_label, 8, 1)
-
-        self.breakdown_group_layout.addWidget(QLabel("Current State %:"), 9, 0)
-        self.breakdown_current_state_percent_label = QLabel("")
-        self.breakdown_group_layout.addWidget(self.breakdown_current_state_percent_label, 9, 1)
-
-        self.breakdown_group_layout.addWidget(QLabel("Current State V:"), 10, 0)
-        self.breakdown_current_state_voltage_label = QLabel("")
-        self.breakdown_group_layout.addWidget(self.breakdown_current_state_voltage_label, 10, 1)
         
-        # NEW: Breakdown for Preferred Cutoff
-        self.breakdown_group_layout.addWidget(QLabel("Preferred Cutoff %:"), 11, 0)
-        self.breakdown_preferred_cutoff_label = QLabel("")
-        self.breakdown_group_layout.addWidget(self.breakdown_preferred_cutoff_label, 11, 1)
+        self.breakdown_group_layout.addWidget(QLabel("Preferred Cutoff %:"), 8, 0)
+        self.breakdown_group_layout.addWidget(self.breakdown_preferred_cutoff_label, 8, 1)
 
-        # NEW: Breakdown for Preferred Cutoff Voltage
-        self.breakdown_group_layout.addWidget(QLabel("Preferred Cutoff V:"), 12, 0) # New row for voltage
-        self.breakdown_preferred_cutoff_voltage_label = QLabel("")
-        self.breakdown_group_layout.addWidget(self.breakdown_preferred_cutoff_voltage_label, 12, 1)
+        self.breakdown_group_layout.addWidget(QLabel("Preferred Cutoff V:"), 9, 0)
+        self.breakdown_group_layout.addWidget(self.breakdown_preferred_cutoff_voltage_label, 9, 1)
+
+        # Add the breakdown group box to its display frame
+        self.breakdown_display_layout.addWidget(self.breakdown_group_box)
+
+        # NEW: Last Logged Ride Group Box (in Breakdown Column)
+        self.last_ride_group_box = QGroupBox("--- Last Logged Ride ---")
+        self.last_ride_layout = QGridLayout(self.last_ride_group_box)
+
+        self.last_ride_layout.addWidget(QLabel("Date:"), 0, 0)
+        self.last_ride_layout.addWidget(self.breakdown_last_ride_date_label, 0, 1)
+
+        self.last_ride_layout.addWidget(QLabel("Distance:"), 1, 0)
+        self.last_ride_layout.addWidget(self.breakdown_last_ride_distance_label, 1, 1)
+
+        self.last_ride_layout.addWidget(QLabel("Wh Consumed:"), 2, 0)
+        self.last_ride_layout.addWidget(self.breakdown_last_ride_wh_label, 2, 1)
+
+        self.last_ride_layout.addWidget(QLabel("Wh/mile:"), 3, 0)
+        self.last_ride_layout.addWidget(self.breakdown_last_ride_wh_per_mile_label, 3, 1)
+
+        # Move the apply efficiency button into this group box for better organization
+        self.apply_logged_efficiency_button = QPushButton("Apply Logged Efficiency to Calculator")
+        self.apply_logged_efficiency_button.clicked.connect(self.apply_logged_efficiency_to_calculator)
+        self.apply_logged_efficiency_button.setStyleSheet(
+            "QPushButton {"
+            "   background-color: #007bff; /* Bootstrap primary blue */"
+            "   color: white;"
+            "   padding: 8px 15px;"
+            "   border-radius: 6px;"
+            "   font-size: 14px;"
+            "   font-weight: bold;"
+            "   border: none;"
+            "}"
+            "QPushButton:hover {"
+            "   background-color: #0069d9;"
+            "}"
+            "QPushButton:pressed {"
+            "   background-color: #0062cc;"
+            "}"
+        )
+        self.last_ride_layout.addWidget(self.apply_logged_efficiency_button, 4, 0, 1, 2) # Span two columns
+
+        self.breakdown_display_layout.addWidget(self.last_ride_group_box)
 
 
-        self.results_layout.addWidget(self.breakdown_group_box, 1, 0, 1, 2)
-
-        # --- Attribution ---
+        # --- Attribution (at the bottom of the Results Column) ---
         attribution_label = QLabel("Made by Adam of Gobytego")
         attribution_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
         attribution_label.setStyleSheet("font-style: italic; font-size: 10pt;")
-        self.results_layout.addWidget(attribution_label, 2, 0, 1, 2) # Span across both columns at the bottom
+        self.results_display_layout.addWidget(attribution_label) # Moved to results column, at the bottom of the QVBoxLayout
 
 
     def init_ride_log_ui(self):
@@ -507,7 +596,8 @@ class BatteryCalculatorGUI(QWidget):
         self.ride_log_table.setHorizontalHeaderLabels([
             "Date", "Distance (miles)", "Start (%)", "End (%)", "Wh Consumed", "Wh/mile", "Riding Style", "Notes" # Added "Riding Style"
         ])
-        self.ride_log_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        # Changed resize mode from Stretch to Interactive
+        self.ride_log_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self.ride_log_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows) # Select whole rows
 
         delete_ride_button = QPushButton("Delete Selected Ride(s)")
@@ -529,20 +619,13 @@ class BatteryCalculatorGUI(QWidget):
             "   background-color: #ac2925;"
             "}"
         )
-
-        # Average efficiency display
-        average_efficiency_group_box = QGroupBox("Average Efficiency from Logged Rides")
-        average_efficiency_layout = QVBoxLayout(average_efficiency_group_box) # Changed to QVBoxLayout
-        self.average_wh_per_mile_label = QLabel("Average Wh/mile: N/A")
-        self.average_miles_per_wh_label = QLabel("Average Miles/Wh: N/A") # New label for miles/Wh
-        average_efficiency_layout.addWidget(self.average_wh_per_mile_label)
-        average_efficiency_layout.addWidget(self.average_miles_per_wh_label)
-
-        self.apply_logged_efficiency_button = QPushButton("Apply Logged Efficiency to Calculator")
-        self.apply_logged_efficiency_button.clicked.connect(self.apply_logged_efficiency_to_calculator)
-        self.apply_logged_efficiency_button.setStyleSheet(
+        
+        # NEW: Export and Import Ride Log Buttons
+        self.export_ride_log_button = QPushButton("Export Ride Log")
+        self.export_ride_log_button.clicked.connect(self.export_ride_log_to_file)
+        self.export_ride_log_button.setStyleSheet(
             "QPushButton {"
-            "   background-color: #007bff; /* Bootstrap primary blue */"
+            "   background-color: #28a745; /* Green */"
             "   color: white;"
             "   padding: 8px 15px;"
             "   border-radius: 6px;"
@@ -551,19 +634,54 @@ class BatteryCalculatorGUI(QWidget):
             "   border: none;"
             "}"
             "QPushButton:hover {"
-            "   background-color: #0069d9;"
+            "   background-color: #218838;"
             "}"
             "QPushButton:pressed {"
-            "   background-color: #0062cc;"
+            "   background-color: #1e7e34;"
             "}"
         )
-        average_efficiency_layout.addWidget(self.apply_logged_efficiency_button)
+
+        self.import_ride_log_button = QPushButton("Import Ride Log")
+        self.import_ride_log_button.clicked.connect(self.import_ride_log_from_file)
+        self.import_ride_log_button.setStyleSheet(
+            "QPushButton {"
+            "   background-color: #17a2b8; /* Cyan */"
+            "   color: white;"
+            "   padding: 8px 15px;"
+            "   border-radius: 6px;"
+            "   font-size: 14px;"
+            "   font-weight: bold;"
+            "   border: none;"
+            "}"
+            "QPushButton:hover {"
+            "   background-color: #138496;"
+            "}"
+            "QPushButton:pressed {"
+            "   background-color: #117a8b;"
+            "}"
+        )
+
+        ride_log_export_import_layout = QHBoxLayout()
+        ride_log_export_import_layout.addWidget(self.export_ride_log_button)
+        ride_log_export_import_layout.addWidget(self.import_ride_log_button)
+
+
+        # Average efficiency display (This group box remains in Ride Log tab)
+        average_efficiency_group_box = QGroupBox("Average Efficiency from Logged Rides")
+        average_efficiency_layout = QVBoxLayout(average_efficiency_group_box)
+        self.average_wh_per_mile_label = QLabel("Average Wh/mile: N/A")
+        self.average_miles_per_wh_label = QLabel("Average Miles/Wh: N/A")
+        average_efficiency_layout.addWidget(self.average_wh_per_mile_label)
+        average_efficiency_layout.addWidget(self.average_miles_per_wh_label)
+        # The apply_logged_efficiency_button is now in the Breakdown Column, removed from here
+        # average_efficiency_layout.addWidget(self.apply_logged_efficiency_button)
 
 
         self.ride_log_main_layout.addWidget(input_group_box)
         self.ride_log_main_layout.addWidget(self.ride_log_table)
         self.ride_log_main_layout.addWidget(delete_ride_button)
-        self.ride_log_main_layout.addWidget(average_efficiency_group_box)
+        self.ride_log_main_layout.addLayout(ride_log_export_import_layout) # Add the new layout for export/import
+        self.ride_log_main_layout.addWidget(average_efficiency_group_box) # Still keep this group box for displaying averages
 
 
     def closeEvent(self, event):
@@ -611,7 +729,8 @@ class BatteryCalculatorGUI(QWidget):
             "wheel_diameter": "",
             "driving_style": "Casual",
             "preferred_cutoff_percentage": "25", # NEW: Default cutoff
-            "ride_log": [] # New entry for ride log data
+            "ride_log": [], # New entry for ride log data
+            "last_ride_data": {} # NEW: Default for last ride data
         }
 
     def update_profile_combo(self):
@@ -666,6 +785,10 @@ class BatteryCalculatorGUI(QWidget):
         self.update_ride_log_table()
         self.calculate_average_efficiency()
 
+        # NEW: Load and display last ride data
+        self.last_ride_data = settings.get("last_ride_data", {})
+        self.update_last_ride_display()
+
 
     def on_profile_selection(self, profile_name):
         """Callback when a new profile is selected from the combobox."""
@@ -691,7 +814,8 @@ class BatteryCalculatorGUI(QWidget):
             "wheel_diameter": self.wheel_diameter_entry.text(),
             "driving_style": self.driving_style_combo.currentText(),
             "preferred_cutoff_percentage": self.preferred_cutoff_entry.text(), # NEW: Save cutoff
-            "ride_log": self.all_profiles.get(profile_name, {}).get("ride_log", []) # Preserve existing log
+            "ride_log": self.all_profiles.get(profile_name, {}).get("ride_log", []), # Preserve existing log
+            "last_ride_data": self.last_ride_data # NEW: Save last ride data
         }
         self.all_profiles[profile_name] = current_settings
         self._save_all_profiles_to_file(profile_name)
@@ -791,7 +915,7 @@ class BatteryCalculatorGUI(QWidget):
                 self.series_cells_entry.show()
                 self.min_voltage_info_label.setText("Empty V: N/A")
                 self.max_voltage_info_label.setText("Full Charge V: N/A")
-                return
+                return None, None, None # Explicitly return None for unpacking
 
         except ValueError:
             inferred_s = None
@@ -802,7 +926,7 @@ class BatteryCalculatorGUI(QWidget):
             self.series_cells_entry.show()
             self.min_voltage_info_label.setText("Empty V: N/A")
             self.max_voltage_info_label.setText("Full Charge V: N/A")
-            return
+            return None, None, None # Explicitly return None for unpacking
 
         series_cells = inferred_s
         if series_cells is None:
@@ -816,9 +940,11 @@ class BatteryCalculatorGUI(QWidget):
             max_v = series_cells * self.CELL_VOLTAGE_FULL
             self.min_voltage_info_label.setText(f"Empty V: {min_v:.1f} (0%)")
             self.max_voltage_info_label.setText(f"Full Charge V: {max_v:.1f} (100%)")
+            return min_v, max_v, series_cells # Return valid values
         else:
             self.min_voltage_info_label.setText("Empty V: N/A")
             self.max_voltage_info_label.setText("N/A")
+            return None, None, None # Explicitly return None for unpacking
 
     def toggle_charge_input(self):
         # Remove widgets from layout before potentially re-adding them
@@ -860,6 +986,25 @@ class BatteryCalculatorGUI(QWidget):
         elif selected_type == "Ah":
             self.capacity_label.setText("Battery Capacity (Ah):")
 
+    def format_time_to_hours_minutes(self, decimal_hours):
+        """Converts a float representing hours into a formatted 'X hours Y min' string."""
+        if decimal_hours is None or decimal_hours < 0:
+            return "N/A"
+        
+        total_minutes = round(decimal_hours * 60)
+        hours = total_minutes // 60
+        minutes = total_minutes % 60
+
+        if hours > 0 and minutes > 0:
+            return f"{hours} hour{'s' if hours > 1 else ''} {minutes} min"
+        elif hours > 0:
+            return f"{hours} hour{'s' if hours > 1 else ''}"
+        elif minutes > 0:
+            return f"{minutes} min"
+        else:
+            return "0 min"
+
+
     def calculate_all(self):
         # Update breakdown first to show current input values, even if calculations fail
         self.update_breakdown()
@@ -882,12 +1027,17 @@ class BatteryCalculatorGUI(QWidget):
             try:
                 duration_hours = float(charging_duration_str.split(" ")[0])
                 self.calculate_percentage_after_charge(duration_hours)
+                # Update the new results_charge_duration_label with formatted time
+                self.results_charge_duration_label.setText(self.format_time_to_hours_minutes(duration_hours))
             except ValueError:
                 if not self.is_initializing: # Suppress during initialization
                     QMessageBox.warning(self, "Input Error", "Invalid charging duration format. Please select from the dropdown or clear it to disable this calculation.")
                 self.percentage_after_charge_label.setText("N/A")
+                self.results_charge_duration_label.setText("N/A")
         else:
             self.percentage_after_charge_label.setText("") # Clear this if no duration is set or charger rate is missing
+            self.results_charge_duration_label.setText("")
+
 
     def get_derived_voltage_range_and_s(self):
         """Calculates min and max voltage and the series cell count based on user input (inferred or manual).
@@ -900,24 +1050,47 @@ class BatteryCalculatorGUI(QWidget):
             inferred_s = self.NOMINAL_VOLTAGE_TO_SERIES_CELLS.get(int(round(nominal_voltage_float)))
             
             if inferred_s is not None:
-                series_cells = inferred_s
+                self.series_cells_entry.setText(str(inferred_s))
+                # Do not show series cells input if inferred
             else:
-                try:
-                    series_cells = int(self.series_cells_entry.text())
-                    if series_cells <= 0:
-                        return None, None, None
-                except ValueError:
-                    return None, None, None
+                # Show if nominal voltage not found in map
+                self.battery_info_layout.addWidget(self.series_cells_label, 1, 0) # Place at row 1, col 0
+                self.battery_info_layout.addWidget(self.series_cells_entry, 1, 1) # Place at row 1, col 1
+                self.series_cells_label.show()
+                self.series_cells_entry.show()
+                self.min_voltage_info_label.setText("Empty V: N/A")
+                self.max_voltage_info_label.setText("Full Charge V: N/A")
+                return None, None, None # Explicitly return the tuple
 
         except ValueError:
+            inferred_s = None
+            # Show if nominal voltage input is not a valid number
+            self.battery_info_layout.addWidget(self.series_cells_label, 1, 0)
+            self.battery_info_layout.addWidget(self.series_cells_entry, 1, 1)
+            self.series_cells_label.show()
+            self.series_cells_entry.show()
+            self.min_voltage_info_label.setText("Empty V: N/A")
+            self.max_voltage_info_label.setText("Full Charge V: N/A")
+            return None, None, None # Explicitly return the tuple
+
+        series_cells = inferred_s
+        if series_cells is None:
+            try:
+                series_cells = int(self.series_cells_entry.text())
+            except ValueError:
+                series_cells = None
+
+        if series_cells is not None and series_cells > 0:
+            min_v = series_cells * self.CELL_VOLTAGE_EMPTY
+            max_v = series_cells * self.CELL_VOLTAGE_FULL
+            self.min_voltage_info_label.setText(f"Empty V: {min_v:.1f} (0%)")
+            self.max_voltage_info_label.setText(f"Full Charge V: {max_v:.1f} (100%)")
+            return min_v, max_v, series_cells # Return valid values
+        else:
+            self.min_voltage_info_label.setText("Empty V: N/A")
+            self.max_voltage_info_label.setText("N/A")
             return None, None, None
 
-        if series_cells is None or series_cells <= 0:
-            return None, None, None
-
-        min_voltage = series_cells * self.CELL_VOLTAGE_EMPTY
-        max_voltage = series_cells * self.CELL_VOLTAGE_FULL
-        return min_voltage, max_voltage, series_cells
 
     def get_current_battery_percentage(self, voltage_override=None, nominal_voltage_override=None, capacity_override=None, capacity_type_override=None):
         """
@@ -1017,7 +1190,7 @@ class BatteryCalculatorGUI(QWidget):
             new_percentage = (new_ah / total_capacity_ah) * 100
             new_percentage = min(100.0, new_percentage) # Cap at 100%
 
-            self.percentage_after_charge_label.setText(f"{new_percentage:.2f}%")
+            self.percentage_after_charge_label.setText(f"{new_percentage:.2f}") # Removed % here, added in init_ui
 
         except ValueError:
             if not self.is_initializing: # Suppress during initialization
@@ -1035,14 +1208,25 @@ class BatteryCalculatorGUI(QWidget):
             preferred_cutoff_str = self.preferred_cutoff_entry.text()
             preferred_cutoff_percentage = float(preferred_cutoff_str) if preferred_cutoff_str else 0.0
 
+            # Update the display label for "Range to cutoff of XX%"
+            if 0 <= preferred_cutoff_percentage <= 100:
+                self.range_to_cutoff_title_label.setText(f"Range to cutoff of {preferred_cutoff_percentage:.0f}%:")
+            else:
+                self.range_to_cutoff_title_label.setText("Range to cutoff (Invalid %):") # Indicate error on the label itself
+
+
             if not (0 <= preferred_cutoff_percentage <= 100):
                 if not self.is_initializing:
                     QMessageBox.warning(self, "Input Error", "Preferred Cutoff Percentage must be between 0 and 100.")
+                self.range_to_cutoff_label.setText("N/A")
+                self.charge_time_from_cutoff_label.setText("N/A")
                 return
 
             current_percentage, _ = self.get_current_battery_percentage()
             if current_percentage is None:
                 # Error message already handled by get_current_battery_percentage or other checks
+                self.range_to_cutoff_label.setText("N/A")
+                self.charge_time_from_cutoff_label.setText("N/A")
                 return
 
             # Ensure current percentage is greater than cutoff for a meaningful range to cutoff calculation
@@ -1060,6 +1244,7 @@ class BatteryCalculatorGUI(QWidget):
                 if nominal_voltage <= 0 or capacity <= 0:
                     if not self.is_initializing:
                         pass
+                    self.range_to_cutoff_label.setText("N/A")
                     return
                 
                 total_energy_wh = capacity if capacity_type == "Wh" else capacity * nominal_voltage
@@ -1069,6 +1254,7 @@ class BatteryCalculatorGUI(QWidget):
                 # If calculate_range fails, full_charge_range will be 0 or N/A
                 if not hasattr(self, 'full_charge_range') or self.full_charge_range <= 0:
                     pass
+                    self.range_to_cutoff_label.setText("N/A")
                     return
                 
                 # Calculate the percentage of battery capacity between current and cutoff
@@ -1101,6 +1287,7 @@ class BatteryCalculatorGUI(QWidget):
             if nominal_voltage <= 0 or capacity <= 0 or charge_rate <= 0:
                 if not self.is_initializing:
                     pass
+                self.charge_time_from_cutoff_label.setText("N/A")
                 return
 
             total_capacity_wh = capacity if capacity_type == "Wh" else capacity * nominal_voltage
@@ -1109,12 +1296,13 @@ class BatteryCalculatorGUI(QWidget):
             if total_capacity_ah <= 0:
                 if not self.is_initializing:
                     pass
+                self.charge_time_from_cutoff_label.setText("N/A")
                 return
 
             ah_to_charge_from_cutoff = total_capacity_ah * ((100 - preferred_cutoff_percentage) / 100)
             if charge_rate > 0:
                 charge_time_from_cutoff = ah_to_charge_from_cutoff / charge_rate
-                self.charge_time_from_cutoff_label.setText(f"{charge_time_from_cutoff:.2f}")
+                self.charge_time_from_cutoff_label.setText(self.format_time_to_hours_minutes(charge_time_from_cutoff))
             else:
                 self.charge_time_from_cutoff_label.setText("N/A (Charger Rate is zero)")
 
@@ -1122,9 +1310,18 @@ class BatteryCalculatorGUI(QWidget):
         except ValueError:
             if not self.is_initializing:
                 pass
+            self.range_to_cutoff_label.setText("N/A")
+            self.charge_time_from_cutoff_label.setText("N/A")
         except ZeroDivisionError:
             if not self.is_initializing:
                 pass
+            self.range_to_cutoff_label.setText("N/A")
+            self.charge_time_from_cutoff_label.setText("N/A")
+        except Exception as e:
+            if not self.is_initializing:
+                QMessageBox.critical(self, "Internal Error", f"An unexpected error occurred during cutoff calculation: {e}")
+            self.range_to_cutoff_label.setText("Error")
+            self.charge_time_from_cutoff_label.setText("Error")
 
     def update_breakdown(self):
         """Updates the breakdown section of the GUI with current input values and calculated derived values."""
@@ -1135,20 +1332,19 @@ class BatteryCalculatorGUI(QWidget):
         motor_wattage = self.motor_wattage_entry.text()
         wheel_diameter = self.wheel_diameter_entry.text()
         charge_rate = self.charge_rate_entry.text()
-        charging_duration = self.charging_duration_combo.currentText()
-        preferred_cutoff = self.preferred_cutoff_entry.text() # NEW: Get cutoff
+        preferred_cutoff = self.preferred_cutoff_entry.text()
 
         # Update labels with raw input values
         self.breakdown_voltage_label.setText(nominal_voltage)
         self.breakdown_motor_watts_label.setText(motor_wattage)
         self.breakdown_wheel_diameter_label.setText(f"{wheel_diameter} in" if wheel_diameter else "N/A")
         self.breakdown_charge_rate_label.setText(charge_rate)
-        self.breakdown_charge_duration_label.setText(charging_duration)
-        self.breakdown_preferred_cutoff_label.setText(f"{preferred_cutoff}%" if preferred_cutoff else "N/A") # NEW: Display cutoff
+        self.breakdown_preferred_cutoff_label.setText(f"{preferred_cutoff}%" if preferred_cutoff else "N/A")
 
 
         # Calculate and update derived values for breakdown
         min_v, max_v, series_cells = self.get_derived_voltage_range_and_s()
+        # Ensure that min_v, max_v, and series_cells are not None before using them
         if series_cells is not None:
             self.breakdown_series_cells_label.setText(f"{series_cells}S")
         else:
@@ -1180,14 +1376,16 @@ class BatteryCalculatorGUI(QWidget):
 
         current_percentage, actual_current_voltage = self.get_current_battery_percentage()
         if current_percentage is not None:
-            self.breakdown_current_state_percent_label.setText(f"{current_percentage:.2f}%")
+            # Update results section labels (removed from breakdown)
+            self.current_state_percent_result_label.setText(f"{current_percentage:.2f}") # Only number, unit handled by label
             if actual_current_voltage is not None:
-                self.breakdown_current_state_voltage_label.setText(f"{actual_current_voltage:.2f}V")
+                self.current_state_voltage_result_label.setText(f"{actual_current_voltage:.2f}") # Only number for results, unit handled by label
             else:
-                self.breakdown_current_state_voltage_label.setText("N/A")
+                self.current_state_voltage_result_label.setText("N/A")
         else:
-            self.breakdown_current_state_percent_label.setText("N/A")
-            self.breakdown_current_state_voltage_label.setText("N/A")
+            self.current_state_percent_result_label.setText("N/A")
+            self.current_state_voltage_result_label.setText("N/A")
+
 
         # Calculate and display preferred cutoff voltage
         if preferred_cutoff and min_v is not None and max_v is not None and (max_v - min_v) > 0:
@@ -1340,9 +1538,9 @@ class BatteryCalculatorGUI(QWidget):
 
             remaining_capacity_ah_to_full = capacity_ah * (1 - (current_percentage / 100))
             estimated_charge_time = remaining_capacity_ah_to_full / charge_rate
-            self.charge_time_label.setText(f"{estimated_charge_time:.2f}")
+            self.charge_time_label.setText(self.format_time_to_hours_minutes(estimated_charge_time))
 
-            self.remaining_charge_percentage_label.setText(f"{100 - current_percentage:.2f}%")
+            self.remaining_charge_percentage_label.setText(f"{100 - current_percentage:.2f}") # Removed % here, added in init_ui
 
             if hasattr(self, 'full_charge_range') and self.full_charge_range > 0:
                 remaining_range = self.full_charge_range * (current_percentage / 100)
@@ -1386,7 +1584,7 @@ class BatteryCalculatorGUI(QWidget):
         self.update_capacity_label()
         self.update_voltage_info_labels()
 
-        # Clear output labels
+        # Clear output labels (now safe as they are initialized in __init__)
         self.calculated_range_label.setText("")
         self.remaining_range_label.setText("")
         self.remaining_charge_percentage_label.setText("")
@@ -1394,8 +1592,14 @@ class BatteryCalculatorGUI(QWidget):
         self.miles_per_wh_label.setText("")
         self.miles_per_ah_label.setText("")
         self.percentage_after_charge_label.setText("")
-        self.range_to_cutoff_label.setText("") # NEW: Clear cutoff labels
-        self.charge_time_from_cutoff_label.setText("") # NEW: Clear cutoff labels
+        self.range_to_cutoff_label.setText("")
+        self.charge_time_from_cutoff_label.setText("")
+        self.current_state_percent_result_label.setText("")
+        self.current_state_voltage_result_label.setText("")
+        self.results_charge_duration_label.setText("")
+        # Reset the dynamic label as well
+        self.range_to_cutoff_title_label.setText("Range to cutoff of:")
+
 
         self.breakdown_voltage_label.setText("")
         self.breakdown_series_cells_label.setText("")
@@ -1405,9 +1609,6 @@ class BatteryCalculatorGUI(QWidget):
         self.breakdown_motor_watts_label.setText("")
         self.breakdown_wheel_diameter_label.setText("")
         self.breakdown_charge_rate_label.setText("")
-        self.breakdown_charge_duration_label.setText("")
-        self.breakdown_current_state_percent_label.setText("")
-        self.breakdown_current_state_voltage_label.setText("")
         self.breakdown_preferred_cutoff_label.setText("") # NEW: Clear breakdown cutoff
         self.breakdown_preferred_cutoff_voltage_label.setText("") # NEW: Clear breakdown cutoff voltage
         self.efficiency_source_label.setText("Predicted") # Reset efficiency source
@@ -1417,6 +1618,10 @@ class BatteryCalculatorGUI(QWidget):
         self.clear_ride_log_fields()
         self.update_ride_log_table() # This will clear it if no data is loaded
         self.calculate_average_efficiency() # This will reset the average label
+
+        # NEW: Clear last ride display
+        self.last_ride_data = {} # Clear the stored data
+        self.update_last_ride_display()
 
 
     def export_breakdown_to_file(self):
@@ -1428,14 +1633,36 @@ class BatteryCalculatorGUI(QWidget):
         breakdown_text += f"Ah: {self.breakdown_ah_label.text()}\n"
         breakdown_text += f"Wh: {self.breakdown_wh_label.text()}\n"
         breakdown_text += f"Motor Watts: {self.breakdown_motor_watts_label.text()}\n"
-        breakdown_text += f"Wheel Diameter: {self.breakdown_wheel_diameter_label.text()}\n"
+        breakdown_text += f"  Wheel Diameter: {self.breakdown_wheel_diameter_label.text()}\n"
         breakdown_text += f"Charge Rate: {self.breakdown_charge_rate_label.text()}\n"
-        breakdown_text += f"Charge Duration: {self.breakdown_charge_duration_label.text()}\n"
-        breakdown_text += f"Current State %: {self.breakdown_current_state_percent_label.text()}\n"
-        breakdown_text += f"Current State V: {self.breakdown_current_state_voltage_label.text()}\n"
         breakdown_text += f"Preferred Cutoff %: {self.breakdown_preferred_cutoff_label.text()}\n" # NEW: Add cutoff to export
         breakdown_text += f"Preferred Cutoff V: {self.breakdown_preferred_cutoff_voltage_label.text()}\n" # NEW: Add cutoff voltage to export
         breakdown_text += f"Efficiency Source: {self.efficiency_source_label.text()}\n" # Include efficiency source
+
+        # Add results section values to the export for completeness, especially moved ones
+        breakdown_text += "\n--- Current Results (Summary) ---\n"
+        breakdown_text += f"Estimated Full Range: {self.calculated_range_label.text()} {self.calculated_range_unit_label.text()}\n"
+        breakdown_text += f"Remaining Range: {self.remaining_range_label.text()} {self.remaining_range_unit_label.text()}\n"
+        # Use the dynamic label's text for export
+        breakdown_text += f"{self.range_to_cutoff_title_label.text().replace(':', '')}: {self.range_to_cutoff_label.text()} {self.range_to_cutoff_unit_label.text()}\n"
+        breakdown_text += f"Current %: {self.current_state_percent_result_label.text()}%\n" # Added % directly here
+        breakdown_text += f"Current V: {self.current_state_voltage_result_label.text()}V\n" # Added V directly here
+        breakdown_text += f"Remaining Charge to 100%: {self.remaining_charge_percentage_label.text()}%\n" # Added % directly here
+        breakdown_text += f"Estimated Charge Time to 100%: {self.charge_time_label.text()}\n"
+        breakdown_text += f"Charge Duration: {self.results_charge_duration_label.text()}\n"
+        breakdown_text += f"Percentage after set charge duration: {self.percentage_after_charge_label.text()}%\n" # Added % directly here
+        breakdown_text += f"Miles/Wh: {self.miles_per_wh_label.text()}\n"
+        breakdown_text += f"Miles/Ah: {self.miles_per_ah_label.text()}\n"
+        breakdown_text += f"Efficiency Source: {self.efficiency_source_label.text()}\n"
+
+        # NEW: Add last ride details to export
+        if self.last_ride_data:
+            breakdown_text += "\n--- Last Logged Ride ---\n"
+            breakdown_text += f"Last Ride Date: {self.last_ride_data.get('date', 'N/A')}\n"
+            breakdown_text += f"Last Ride Distance: {self.last_ride_data.get('distance_miles', 'N/A')} miles\n"
+            breakdown_text += f"Last Ride Wh Consumed: {self.last_ride_data.get('wh_consumed', 'N/A')} Wh\n"
+            breakdown_text += f"Last Ride Wh/mile: {self.last_ride_data.get('wh_per_mile', 'N/A')} Wh/mile\n"
+
 
         file_path, _ = QFileDialog.getSaveFileName(
             self, "Save Vehicle Breakdown", "", "Text files (*.txt);;All files (*.*)"
@@ -1551,10 +1778,16 @@ class BatteryCalculatorGUI(QWidget):
             
             self.all_profiles[self.current_profile_name]["ride_log"].append(ride_data)
             
+            # CRITICAL FIX: Update last_ride_data within the profile's dictionary explicitly
+            self.all_profiles[self.current_profile_name]["last_ride_data"] = ride_data
+            self.last_ride_data = ride_data # Also keep the instance variable updated for immediate display
+            
+            self.update_last_ride_display() # Update display with the new last ride data
+
             # Update the table and save the profiles
             self.update_ride_log_table()
             self.calculate_average_efficiency()
-            self._save_all_profiles_to_file(self.current_profile_name)
+            self._save_all_profiles_to_file(self.current_profile_name) # This now saves the updated all_profiles
 
             self.clear_ride_log_fields() # Clear input fields after successful log
             QMessageBox.information(self, "Ride Logged", "Ride successfully logged!")
@@ -1617,6 +1850,17 @@ class BatteryCalculatorGUI(QWidget):
             self.all_profiles[self.current_profile_name]["ride_log"] = current_log
             self.update_ride_log_table()
             self.calculate_average_efficiency()
+            
+            # Logic to correctly update last_ride_data after deletion
+            if current_log:
+                self.last_ride_data = current_log[-1] # The last remaining ride
+            else:
+                self.last_ride_data = {} # No rides left
+
+            # Ensure the profile's saved data is also updated
+            self.all_profiles[self.current_profile_name]["last_ride_data"] = self.last_ride_data
+            self.update_last_ride_display() # Update display after logic
+            
             self._save_all_profiles_to_file(self.current_profile_name)
             QMessageBox.information(self, "Deleted", f"{len(selected_rows)} ride(s) deleted.")
 
@@ -1670,6 +1914,112 @@ class BatteryCalculatorGUI(QWidget):
         self.calculate_all() # Recalculate range with predicted efficiency
         if show_message:
             QMessageBox.information(self, "Efficiency Reset", "Calculator is now using predicted efficiency based on driving style.")
+
+    def update_last_ride_display(self):
+        """Updates the labels in the 'Last Logged Ride' section of the Breakdown column."""
+        if self.last_ride_data:
+            self.breakdown_last_ride_date_label.setText(self.last_ride_data.get('date', 'N/A'))
+            self.breakdown_last_ride_distance_label.setText(f"{self.last_ride_data.get('distance_miles', 0):.2f} miles")
+            self.breakdown_last_ride_wh_label.setText(f"{self.last_ride_data.get('wh_consumed', 0):.2f} Wh")
+            self.breakdown_last_ride_wh_per_mile_label.setText(f"{self.last_ride_data.get('wh_per_mile', 0):.2f} Wh/mile")
+        else:
+            self.breakdown_last_ride_date_label.setText("N/A")
+            self.breakdown_last_ride_distance_label.setText("N/A")
+            self.breakdown_last_ride_wh_label.setText("N/A")
+            self.breakdown_last_ride_wh_per_mile_label.setText("N/A")
+
+    def export_ride_log_to_file(self):
+        """Exports the current profile's ride log to a JSON file."""
+        current_log = self.all_profiles.get(self.current_profile_name, {}).get("ride_log", [])
+        if not current_log:
+            QMessageBox.information(self, "Export Ride Log", "No ride log data to export for the current profile.")
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Export Ride Log", f"{self.current_profile_name}_ride_log.json", "JSON files (*.json);;All files (*.*)"
+        )
+
+        if file_path:
+            try:
+                with open(file_path, 'w') as f:
+                    json.dump(current_log, f, indent=4)
+                QMessageBox.information(self, "Export Successful", f"Ride log exported to:\n{file_path}")
+            except Exception as e:
+                QMessageBox.critical(self, "Export Error", f"Failed to export ride log: {e}")
+        else:
+            QMessageBox.information(self, "Export Cancelled", "Ride log export cancelled.")
+
+    def import_ride_log_from_file(self):
+        """Imports ride log data from a JSON file and appends it to the current profile's log."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Import Ride Log", "", "JSON files (*.json);;All files (*.*)"
+        )
+
+        if file_path:
+            try:
+                with open(file_path, 'r') as f:
+                    imported_log = json.load(f)
+                
+                if not isinstance(imported_log, list):
+                    QMessageBox.critical(self, "Import Error", "Invalid file format. The file should contain a JSON list of ride entries.")
+                    return
+
+                # Basic validation for imported data structure
+                for ride_entry in imported_log:
+                    # Check for mandatory keys needed for calculations and display
+                    mandatory_keys = ["date", "distance_miles", "start_percent", "end_percent", "wh_consumed", "wh_per_mile", "riding_style"]
+                    if not isinstance(ride_entry, dict) or not all(key in ride_entry for key in mandatory_keys):
+                        # Attempt to gracefully handle missing keys by setting defaults if possible
+                        ride_entry.setdefault("date", "N/A")
+                        ride_entry.setdefault("distance_miles", 0.0)
+                        ride_entry.setdefault("start_percent", 0.0)
+                        ride_entry.setdefault("end_percent", 0.0)
+                        ride_entry.setdefault("wh_consumed", 0.0)
+                        ride_entry.setdefault("wh_per_mile", 0.0)
+                        ride_entry.setdefault("riding_style", "N/A")
+                        ride_entry.setdefault("notes", "") # Also ensure notes field is present
+
+                        # For older entries that might not have start_state_type/start_value/end_state_type/end_value
+                        # Try to infer if possible, or set a default. This requires more context, so for now,
+                        # just ensure they exist to prevent errors if logic relies on them.
+                        ride_entry.setdefault("start_state_type", "percentage")
+                        ride_entry.setdefault("start_value", ride_entry.get("start_percent", 0.0))
+                        ride_entry.setdefault("end_state_type", "percentage")
+                        ride_entry.setdefault("end_value", ride_entry.get("end_percent", 0.0))
+
+                        QMessageBox.warning(self, "Import Warning", "Some imported entries might be missing expected fields. Defaults have been applied where possible.")
+                        # No `break` here, continue to try and import other valid entries
+                
+                current_profile_log = self.all_profiles.get(self.current_profile_name, {}).get("ride_log", [])
+                current_profile_log.extend(imported_log) # Append new rides
+
+                # Update the ride_log in the current profile
+                self.all_profiles[self.current_profile_name]["ride_log"] = current_profile_log
+                
+                # Update last_ride_data if new rides were imported
+                if current_profile_log: # Check if log has any rides after import
+                    self.last_ride_data = current_profile_log[-1] # Set last ride to the very last one after import
+                else:
+                    self.last_ride_data = {} # No rides in log
+
+                # Ensure the profile's saved data is also updated
+                self.all_profiles[self.current_profile_name]["last_ride_data"] = self.last_ride_data
+
+                self.update_ride_log_table()
+                self.calculate_average_efficiency()
+                self.update_last_ride_display() # Refresh last ride display
+                self._save_all_profiles_to_file(self.current_profile_name) # Save the updated profile
+
+                QMessageBox.information(self, "Import Successful", f"Ride log imported from:\n{file_path}")
+
+            except FileNotFoundError:
+                QMessageBox.critical(self, "Import Error", "File not found.")
+            except json.JSONDecodeError:
+                QMessageBox.critical(self, "Import Error", "Invalid JSON format in the selected file.")
+            except Exception as e:
+                QMessageBox.critical(self, "Import Error", f"An unexpected error occurred during import: {e}")
+        else:
+            QMessageBox.information(self, "Import Cancelled", "Ride log import cancelled.")
 
 
 if __name__ == "__main__":
