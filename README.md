@@ -25,5 +25,3 @@ to run the batteryutils.py in python you will need the following installed:
 
 so far this has only been tested on Linux if anyone wants to test on Mac or Windows be my guest.  
 
-to run in terminal mode run with --cli flag.
-ex. python3 batteryutils.py --cli
