@@ -16,9 +16,9 @@ a bunch more to come...
 
 "batteryutils" is the standalone binary
 
-<img align="center" width="500" src="https://github.com/Gobytego/BatteryUtils/blob/main/screenshot1.png">
+<img align="center" width="500" src="https://github.com/Gobytego/BatteryUtils/blob/main/screenshot01.png">
 
-<img align="center" width="500" src="https://github.com/Gobytego/BatteryUtils/blob/main/screenshot2.png">
+<img align="center" width="500" src="https://github.com/Gobytego/BatteryUtils/blob/main/screenshot02.png">
 
 to run the batteryutils.py in python you will need the following installed:
  - pyqt
