@@ -14,7 +14,7 @@ a bunch more to come...
 
 "batteryutils.py" is the code
 
-"batteryutils" is the standalone binary
+"batteryutils_versionnumber" is the standalone binary
 
 <img align="center" width="500" src="https://github.com/Gobytego/BatteryUtils/blob/main/screenshot01.png">
 
