@@ -36,14 +36,14 @@ class BatteryCalculatorGUI(QWidget):
     # Average Wh/mile efficiency based on driving style FOR SMALL AND LARGE WHEELS
     # These values are recalibrated based on the user's provided examples.
     SMALL_WHEEL_EFFICIENCY = {
-        "Eco": 33.28,       # Updated from Bike 1 (48V*10.4Ah / 15 miles = 33.28 Wh/mile)
-        "Casual": 30.0,     # Moderate efficiency for small vehicles (kept original as no new data provided)
-        "Agressive": 45.0   # Less efficient for small vehicles (kept original as no new data provided)
+        "Eco": 33.28,       # Reverted to original
+        "Casual": 30.0,     # Reverted to original
+        "Agressive": 45.0   # Reverted to original
     }
     LARGE_WHEEL_EFFICIENCY = {
-        "Eco": 41.6,        # Updated from Bike 2 (52V*20Ah / 25 miles = 41.6 Wh/mile)
-        "Casual": 65.0,     # Scaled up consistently for larger wheels, more power (kept original)
-        "Agressive": 80.0   # Scaled up consistently for larger wheels, more power (kept original)
+        "Eco": 23.11,       # Updated based on 1040Wh / 45 miles (kept from last change)
+        "Casual": 34.67,    # Updated based on 1040Wh / 30 miles (kept from last change)
+        "Agressive": 41.6   # Updated based on 1040Wh / 25 miles (kept from last change)
     }
 
     MAX_PROFILES = 10 # Maximum number of profiles allowed (Increased from 3 to 10)
@@ -51,7 +51,7 @@ class BatteryCalculatorGUI(QWidget):
     def __init__(self):
         super().__init__()
         # Changed window title to reflect "BatteryUtils" and version number
-        self.setWindowTitle("BatteryUtils v1.06.03")
+        self.setWindowTitle("BatteryUtils v1.06.04") # Version bumped from 1.06.03 to 1.06.04
         self.setGeometry(100, 100, 1200, 750) # x, y, width, height for the window, adjusted for three columns
 
         # Store all profiles loaded from the settings file
@@ -83,6 +83,9 @@ class BatteryCalculatorGUI(QWidget):
         self.calculated_range_unit_label = QLabel("miles") # Also explicitly initialize these
         self.remaining_range_unit_label = QLabel("miles")
         self.range_to_cutoff_unit_label = QLabel("miles")
+        # NEW: Initialize label for full range to cutoff
+        self.full_range_to_cutoff_label = QLabel("")
+
 
         # Initialize breakdown labels to avoid AttributeError
         self.breakdown_voltage_label = QLabel("")
@@ -362,6 +365,11 @@ class BatteryCalculatorGUI(QWidget):
         self.range_layout.addWidget(self.range_to_cutoff_title_label, 2, 0) # Use the new dynamic label
         self.range_layout.addWidget(self.range_to_cutoff_label, 2, 1)
         self.range_layout.addWidget(self.range_to_cutoff_unit_label, 2, 2)
+
+        # NEW: Estimated Full Range to Cutoff %
+        self.range_layout.addWidget(QLabel("Full Range to Cutoff %:"), 3, 0)
+        self.range_layout.addWidget(self.full_range_to_cutoff_label, 3, 1)
+        self.range_layout.addWidget(self.calculated_range_unit_label, 3, 2) # Use same unit label
 
 
         # 2. State Group Box
@@ -944,7 +952,7 @@ class BatteryCalculatorGUI(QWidget):
         else:
             self.min_voltage_info_label.setText("Empty V: N/A")
             self.max_voltage_info_label.setText("N/A")
-            return None, None, None # Explicitly return None for unpacking
+            return None, None, None
 
     def toggle_charge_input(self):
         # Remove widgets from layout before potentially re-adding them
@@ -1015,7 +1023,7 @@ class BatteryCalculatorGUI(QWidget):
         # Calculate time to full charge and remaining range/percentage based on current state
         self.calculate_charge_time_and_remaining_range()
         
-        # NEW: Calculate range to cutoff and charge time from cutoff
+        # NEW: Calculate range to cutoff and charge time from cutoff, and FULL range to cutoff
         self.calculate_cutoff_metrics()
 
         # Get inputs for optional percentage after charge calculation
@@ -1203,6 +1211,7 @@ class BatteryCalculatorGUI(QWidget):
         """Calculates range to preferred cutoff and charge time from preferred cutoff."""
         self.range_to_cutoff_label.setText("")
         self.charge_time_from_cutoff_label.setText("")
+        self.full_range_to_cutoff_label.setText("") # Clear new label too
 
         try:
             preferred_cutoff_str = self.preferred_cutoff_entry.text()
@@ -1220,6 +1229,7 @@ class BatteryCalculatorGUI(QWidget):
                     QMessageBox.warning(self, "Input Error", "Preferred Cutoff Percentage must be between 0 and 100.")
                 self.range_to_cutoff_label.setText("N/A")
                 self.charge_time_from_cutoff_label.setText("N/A")
+                self.full_range_to_cutoff_label.setText("N/A") # Update new label on error
                 return
 
             current_percentage, _ = self.get_current_battery_percentage()
@@ -1227,60 +1237,65 @@ class BatteryCalculatorGUI(QWidget):
                 # Error message already handled by get_current_battery_percentage or other checks
                 self.range_to_cutoff_label.setText("N/A")
                 self.charge_time_from_cutoff_label.setText("N/A")
+                self.full_range_to_cutoff_label.setText("N/A") # Update new label on error
                 return
 
-            # Ensure current percentage is greater than cutoff for a meaningful range to cutoff calculation
+            # Retrieve battery capacity info
+            nominal_voltage_str = self.voltage_entry.text()
+            capacity_type = self.capacity_type_combo.currentText()
+            capacity_str = self.capacity_entry.text()
+            
+            nominal_voltage = float(nominal_voltage_str) if nominal_voltage_str else 0.0
+            capacity = float(capacity_str) if capacity_str else 0.0
+
+            if nominal_voltage <= 0 or capacity <= 0:
+                if not self.is_initializing:
+                    pass
+                self.range_to_cutoff_label.setText("N/A")
+                self.full_range_to_cutoff_label.setText("N/A") # Update new label on error
+                return
+            
+            total_energy_wh = capacity if capacity_type == "Wh" else capacity * nominal_voltage
+
+            # Retrieve adjusted_wh_per_mile (from calculate_range, which updates self.efficiency_source_label)
+            if not hasattr(self, 'full_charge_range') or self.full_charge_range <= 0:
+                self.range_to_cutoff_label.setText("N/A")
+                self.full_range_to_cutoff_label.setText("N/A") # Update new label on error
+                return
+            
+            # Use the same efficiency as the main range calculation
+            try:
+                miles_per_wh = float(self.miles_per_wh_label.text()) # Get the value already displayed
+                adjusted_wh_per_mile = 1 / miles_per_wh if miles_per_wh > 0 else 0
+            except ValueError:
+                adjusted_wh_per_mile = 0
+
+            if adjusted_wh_per_mile <= 0:
+                self.range_to_cutoff_label.setText("N/A (Efficiency Error)")
+                self.full_range_to_cutoff_label.setText("N/A (Efficiency Error)") # Update new label on error
+                return
+
+
+            # Calculate range to cutoff from CURRENT state
             if current_percentage <= preferred_cutoff_percentage:
                 self.range_to_cutoff_label.setText("N/A (At/Below Cutoff)")
             else:
-                # Calculate range to cutoff
-                nominal_voltage_str = self.voltage_entry.text()
-                capacity_type = self.capacity_type_combo.currentText()
-                capacity_str = self.capacity_entry.text()
-                
-                nominal_voltage = float(nominal_voltage_str) if nominal_voltage_str else 0.0
-                capacity = float(capacity_str) if capacity_str else 0.0
-
-                if nominal_voltage <= 0 or capacity <= 0:
-                    if not self.is_initializing:
-                        pass
-                    self.range_to_cutoff_label.setText("N/A")
-                    return
-                
-                total_energy_wh = capacity if capacity_type == "Wh" else capacity * nominal_voltage
-
-                # Retrieve adjusted_wh_per_mile (from calculate_range, which updates self.efficiency_source_label)
-                # It's better to ensure calculate_range has already run and populated full_charge_range and adjusted_wh_per_mile
-                # If calculate_range fails, full_charge_range will be 0 or N/A
-                if not hasattr(self, 'full_charge_range') or self.full_charge_range <= 0:
-                    pass
-                    self.range_to_cutoff_label.setText("N/A")
-                    return
-                
-                # Calculate the percentage of battery capacity between current and cutoff
                 percent_difference = current_percentage - preferred_cutoff_percentage
-                
-                # Calculate the Wh available in that percentage range
                 wh_available_to_cutoff = total_energy_wh * (percent_difference / 100)
+                range_to_cutoff = wh_available_to_cutoff / adjusted_wh_per_mile
+                self.range_to_cutoff_label.setText(f"{range_to_cutoff:.2f}")
 
-                # Use the same efficiency as the main range calculation
-                # adjusted_wh_per_mile is obtained from calculate_range's logic
-                # We need to ensure we have a valid adjusted_wh_per_mile here.
-                # If calculate_range populated self.miles_per_wh_label, we can derive it.
-                try:
-                    miles_per_wh = float(self.miles_per_wh_label.text()) # Get the value already displayed
-                    adjusted_wh_per_mile = 1 / miles_per_wh if miles_per_wh > 0 else 0
-                except ValueError:
-                    adjusted_wh_per_mile = 0
-
-                if adjusted_wh_per_mile > 0:
-                    range_to_cutoff = wh_available_to_cutoff / adjusted_wh_per_mile
-                    self.range_to_cutoff_label.setText(f"{range_to_cutoff:.2f}")
-                else:
-                    self.range_to_cutoff_label.setText("N/A (Efficiency Error)")
+            # NEW: Calculate Estimated Full Range to Cutoff %
+            usable_percentage = 100 - preferred_cutoff_percentage
+            if usable_percentage <= 0: # If cutoff is 100% or more, usable range is 0
+                self.full_range_to_cutoff_label.setText("0.00")
+            else:
+                wh_usable_to_cutoff = total_energy_wh * (usable_percentage / 100)
+                estimated_full_range_to_cutoff = wh_usable_to_cutoff / adjusted_wh_per_mile
+                self.full_range_to_cutoff_label.setText(f"{estimated_full_range_to_cutoff:.2f}")
 
 
-            # Calculate charge time from cutoff
+            # Calculate charge time from cutoff (to 100%)
             charge_rate_str = self.charge_rate_entry.text()
             charge_rate = float(charge_rate_str) if charge_rate_str else 0.0
 
@@ -1312,16 +1327,19 @@ class BatteryCalculatorGUI(QWidget):
                 pass
             self.range_to_cutoff_label.setText("N/A")
             self.charge_time_from_cutoff_label.setText("N/A")
+            self.full_range_to_cutoff_label.setText("N/A") # Update new label on error
         except ZeroDivisionError:
             if not self.is_initializing:
                 pass
             self.range_to_cutoff_label.setText("N/A")
             self.charge_time_from_cutoff_label.setText("N/A")
+            self.full_range_to_cutoff_label.setText("N/A") # Update new label on error
         except Exception as e:
             if not self.is_initializing:
                 QMessageBox.critical(self, "Internal Error", f"An unexpected error occurred during cutoff calculation: {e}")
             self.range_to_cutoff_label.setText("Error")
             self.charge_time_from_cutoff_label.setText("Error")
+            self.full_range_to_cutoff_label.setText("Error") # Update new label on error
 
     def update_breakdown(self):
         """Updates the breakdown section of the GUI with current input values and calculated derived values."""
@@ -1599,6 +1617,8 @@ class BatteryCalculatorGUI(QWidget):
         self.results_charge_duration_label.setText("")
         # Reset the dynamic label as well
         self.range_to_cutoff_title_label.setText("Range to cutoff of:")
+        # NEW: Clear the new full range to cutoff label
+        self.full_range_to_cutoff_label.setText("")
 
 
         self.breakdown_voltage_label.setText("")
@@ -1645,6 +1665,9 @@ class BatteryCalculatorGUI(QWidget):
         breakdown_text += f"Remaining Range: {self.remaining_range_label.text()} {self.remaining_range_unit_label.text()}\n"
         # Use the dynamic label's text for export
         breakdown_text += f"{self.range_to_cutoff_title_label.text().replace(':', '')}: {self.range_to_cutoff_label.text()} {self.range_to_cutoff_unit_label.text()}\n"
+        # NEW: Add full range to cutoff to export
+        breakdown_text += f"Full Range to Cutoff %: {self.full_range_to_cutoff_label.text()} {self.calculated_range_unit_label.text()}\n"
+
         breakdown_text += f"Current %: {self.current_state_percent_result_label.text()}%\n" # Added % directly here
         breakdown_text += f"Current V: {self.current_state_voltage_result_label.text()}V\n" # Added V directly here
         breakdown_text += f"Remaining Charge to 100%: {self.remaining_charge_percentage_label.text()}%\n" # Added % directly here
@@ -1947,7 +1970,7 @@ class BatteryCalculatorGUI(QWidget):
             except Exception as e:
                 QMessageBox.critical(self, "Export Error", f"Failed to export ride log: {e}")
         else:
-            QMessageBox.information(self, "Export Cancelled", "Ride log export cancelled.")
+            QMessageBox.information(self, "Export Cancelled", "Ride log import cancelled.")
 
     def import_ride_log_from_file(self):
         """Imports ride log data from a JSON file and appends it to the current profile's log."""
