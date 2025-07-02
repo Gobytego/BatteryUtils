@@ -2,9 +2,9 @@
 
 Updated 06/26/2025
 
-COMING SOON: import data from exported json files from the app SuperCycle made by <a href="http://www.osborntech.com/"> osborntech</a>
-<br><a href="google playstore">https://play.google.com/store/apps/details?id=com.osborntech.supercycle&hl=en_US&pli=1</a>
-<br><a href="apple App Store"> https://apps.apple.com/us/app/supercycle-bike-computer/id1549463103</a>
+COMING SOON: import data from exported json files from the app SuperCycle made by <a href="http://www.osborntech.com/"> Osborntech</a>
+<br><a href="https://play.google.com/store/apps/details?id=com.osborntech.supercycle&hl=en_US&pli=1">Google Play Store</a>
+<br><a href="https://apps.apple.com/us/app/supercycle-bike-computer/id1549463103">Apple App Store</a>
 <br> try it now with the batteryutils_1.06.test.py
 
 A set of Battery tools for e-bikes/scooters This includes: 
