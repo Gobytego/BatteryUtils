@@ -2,6 +2,10 @@
 
 Updated 06/26/2025
 
+COMING SOON: import data from exported json files from the app SuperCycle
+<a href="https://play.google.com/store/apps/details?id=com.osborntech.supercycle&hl=en_US&pli=1">https://play.google.com/store/apps/details?id=com.osborntech.supercycle&hl=en_US&pli=1</a>
+<a href="https://apps.apple.com/us/app/supercycle-bike-computer/id1549463103"> https://apps.apple.com/us/app/supercycle-bike-computer/id1549463103</a>
+
 A set of Battery tools for e-bikes/scooters This includes: 
 
 Battery range Calculator to get a estimate of how many miles you can ride on the remaining charge you have left on your battery. 
