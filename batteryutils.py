@@ -1,14 +1,16 @@
 import sys
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta # Import timedelta for duration calculation
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QLineEdit, QPushButton, QComboBox, QMessageBox,
     QTextEdit, QRadioButton, QFrame, QGroupBox, QInputDialog, QFileDialog, QButtonGroup,
-    QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView, QDateTimeEdit
+    QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView, QDateTimeEdit,
+    QTextBrowser # Import QTextBrowser for clickable links
 )
-from PyQt6.QtCore import Qt, QTimer, QDateTime
+from PyQt6.QtCore import Qt, QTimer, QDateTime, QUrl # Import QUrl for opening links
+from PyQt6.QtGui import QIntValidator, QDesktopServices # Import QDesktopServices for opening links
 
 # Changed settings file name
 SETTINGS_FILE = "BatteryUtils_Settings.json"
@@ -48,10 +50,14 @@ class BatteryCalculatorGUI(QWidget):
 
     MAX_PROFILES = 10 # Maximum number of profiles allowed (Increased from 3 to 10)
 
+    # Conversion factor for meters to miles
+    METERS_TO_MILES = 0.000621371
+
     def __init__(self):
         super().__init__()
         # Changed window title to reflect "BatteryUtils" and version number
-        self.setWindowTitle("BatteryUtils v1.06.04") # Version bumped from 1.06.03 to 1.06.04
+        self.setWindowTitle("BatteryUtils v1.07.01") # Version bumped from 1.06.05 to 1.07.01
+
         self.setGeometry(100, 100, 1200, 750) # x, y, width, height for the window, adjusted for three columns
 
         # Store all profiles loaded from the settings file
@@ -112,6 +118,14 @@ class BatteryCalculatorGUI(QWidget):
         # Instance variable to hold the last ride data for persistence
         self.last_ride_data = {}
 
+        # Timer specific variables
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_timer)
+        self.time_remaining_seconds = 0
+        self.counting_up = False
+        self.timer_running = False
+        self.initial_countdown_seconds = 0 # Store initial value for reset
+
 
         self.init_ui()
 
@@ -169,6 +183,20 @@ class BatteryCalculatorGUI(QWidget):
         self.ride_log_main_layout = QVBoxLayout(self.ride_log_tab)
         self.init_ride_log_ui() # Call method to build ride log UI
         self.tab_widget.addTab(self.ride_log_tab, "Ride Log")
+
+        # --- Tab 3: Quick Tools (NEW) ---
+        self.quick_tools_tab = QWidget()
+        # This QHBoxLayout will hold the three main columns for Quick Tools
+        self.quick_tools_main_h_layout = QHBoxLayout(self.quick_tools_tab)
+        self.init_quick_tools_ui() # Call method to build quick tools UI
+        self.tab_widget.addTab(self.quick_tools_tab, "Quick Tools")
+
+        # --- Tab 4: About (NEW) ---
+        self.about_tab = QWidget()
+        self.about_main_layout = QVBoxLayout(self.about_tab)
+        self.init_about_ui() # Call method to build about UI
+        self.tab_widget.addTab(self.about_tab, "About")
+
 
         # --- Profile Management Section (moved into input_frame) ---
         self.profile_group_box = QGroupBox("--- Profile Management ---")
@@ -521,6 +549,36 @@ class BatteryCalculatorGUI(QWidget):
         attribution_label.setStyleSheet("font-style: italic; font-size: 10pt;")
         self.results_display_layout.addWidget(attribution_label) # Moved to results column, at the bottom of the QVBoxLayout
 
+    def format_time_to_hours_minutes(self, decimal_hours):
+        """Converts a float representing hours into a formatted 'X hours Y min' string."""
+        if decimal_hours is None or decimal_hours < 0:
+            return "N/A"
+        
+        total_minutes = round(decimal_hours * 60)
+        hours = total_minutes // 60
+        minutes = total_minutes % 60
+
+        if hours > 0 and minutes > 0:
+            return f"{hours} hour{'s' if hours > 1 else ''} {minutes} min"
+        elif hours > 0:
+            return f"{hours} hour{'s' if hours > 1 else ''}"
+        elif minutes > 0:
+            return f"{minutes} min"
+        else:
+            return "0 min"
+
+    def update_timer_display(self):
+        """Formats and displays the current timer value."""
+        total_seconds = self.time_remaining_seconds
+        if total_seconds < 0: # Should not happen, but defensive
+            total_seconds = 0
+
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        seconds = total_seconds % 60
+        
+        self.timer_display_label.setText(f"{hours:02}:{minutes:02}:{seconds:02}")
+
 
     def init_ride_log_ui(self):
         """Initializes the UI elements for the Ride Log tab."""
@@ -668,10 +726,33 @@ class BatteryCalculatorGUI(QWidget):
             "   background-color: #117a8b;"
             "}"
         )
+        
+        # RENAMED: Import from SuperCycle App button
+        self.import_supercycle_button = QPushButton("Import from SuperCycle App")
+        self.import_supercycle_button.clicked.connect(self.import_from_supercycle_app)
+        self.import_supercycle_button.setStyleSheet(
+            "QPushButton {"
+            "   background-color: #6f42c1; /* Purple */"
+            "   color: white;"
+            "   padding: 8px 15px;"
+            "   border-radius: 6px;"
+            "   font-size: 14px;"
+            "   font-weight: bold;"
+            "   border: none;"
+            "}"
+            "QPushButton:hover {"
+            "   background-color: #5a34a0;"
+            "}"
+            "QPushButton:pressed {"
+            "   background-color: #4b2a82;"
+            "}"
+        )
+
 
         ride_log_export_import_layout = QHBoxLayout()
         ride_log_export_import_layout.addWidget(self.export_ride_log_button)
         ride_log_export_import_layout.addWidget(self.import_ride_log_button)
+        ride_log_export_import_layout.addWidget(self.import_supercycle_button) # Add the new button
 
 
         # Average efficiency display (This group box remains in Ride Log tab)
@@ -690,6 +771,480 @@ class BatteryCalculatorGUI(QWidget):
         self.ride_log_main_layout.addWidget(delete_ride_button)
         self.ride_log_main_layout.addLayout(ride_log_export_import_layout) # Add the new layout for export/import
         self.ride_log_main_layout.addWidget(average_efficiency_group_box) # Still keep this group box for displaying averages
+
+
+    def init_quick_tools_ui(self):
+        """Initializes the UI elements for the Quick Tools tab."""
+        # Column 1: Converters
+        converters_column_layout = QVBoxLayout()
+        self.quick_tools_main_h_layout.addLayout(converters_column_layout)
+
+        # Percentage to Voltage Converter
+        percent_to_volt_group_box = QGroupBox("Percentage to Voltage Converter")
+        percent_to_volt_layout = QGridLayout(percent_to_volt_group_box)
+
+        percent_to_volt_layout.addWidget(QLabel("Percentage (%):"), 0, 0)
+        self.percent_input_quick = QLineEdit()
+        self.percent_input_quick.setPlaceholderText("e.g., 50")
+        percent_to_volt_layout.addWidget(self.percent_input_quick, 0, 1)
+
+        convert_percent_button = QPushButton("Convert to Voltage")
+        convert_percent_button.clicked.connect(self.convert_percent_to_voltage)
+        convert_percent_button.setStyleSheet(
+            "QPushButton {"
+            "   background-color: #2196F3; /* Blue */"
+            "   color: white;"
+            "   padding: 8px 15px;"
+            "   border-radius: 6px;"
+            "   font-size: 14px;"
+            "   font-weight: bold;"
+            "   border: none;"
+            "}"
+            "QPushButton:hover {"
+            "   background-color: #1976D2;"
+            "}"
+        )
+        percent_to_volt_layout.addWidget(convert_percent_button, 1, 0, 1, 2) # Span two columns
+
+        percent_to_volt_layout.addWidget(QLabel("Estimated Voltage (V):"), 2, 0)
+        self.voltage_output_quick = QLabel("N/A")
+        self.voltage_output_quick.setStyleSheet("font-weight: bold;")
+        percent_to_volt_layout.addWidget(self.voltage_output_quick, 2, 1)
+
+        converters_column_layout.addWidget(percent_to_volt_group_box)
+
+        # Voltage to Percentage Converter
+        volt_to_percent_group_box = QGroupBox("Voltage to Percentage Converter")
+        volt_to_percent_layout = QGridLayout(volt_to_percent_group_box)
+
+        volt_to_percent_layout.addWidget(QLabel("Voltage (V):"), 0, 0)
+        self.voltage_input_quick = QLineEdit()
+        self.voltage_input_quick.setPlaceholderText("e.g., 48.1")
+        volt_to_percent_layout.addWidget(self.voltage_input_quick, 0, 1)
+
+        convert_volt_button = QPushButton("Convert to Percentage")
+        convert_volt_button.clicked.connect(self.convert_voltage_to_percent)
+        convert_volt_button.setStyleSheet(
+            "QPushButton {"
+            "   background-color: #00BCD4; /* Cyan */"
+            "   color: white;"
+            "   padding: 8px 15px;"
+            "   border-radius: 6px;"
+            "   font-size: 14px;"
+            "   font-weight: bold;"
+            "   border: none;"
+            "}"
+            "QPushButton:hover {"
+            "   background-color: #0097A7;"
+            "}"
+        )
+        volt_to_percent_layout.addWidget(convert_volt_button, 1, 0, 1, 2) # Span two columns
+
+        volt_to_percent_layout.addWidget(QLabel("Estimated Percentage (%):"), 2, 0)
+        self.percentage_output_quick = QLabel("N/A")
+        self.percentage_output_quick.setStyleSheet("font-weight: bold;")
+        volt_to_percent_layout.addWidget(self.percentage_output_quick, 2, 1)
+
+        converters_column_layout.addWidget(volt_to_percent_group_box)
+        converters_column_layout.addStretch(1) # Push content to the top
+
+
+        # Column 2: Countdown Timer
+        timer_column_layout = QVBoxLayout()
+        self.quick_tools_main_h_layout.addLayout(timer_column_layout)
+
+        timer_group_box = QGroupBox("Countdown / Count-up Timer")
+        timer_layout = QGridLayout(timer_group_box)
+
+        timer_layout.addWidget(QLabel("Hours:"), 0, 0)
+        self.countdown_hours_entry = QLineEdit("0")
+        self.countdown_hours_entry.setValidator(QIntValidator(0, 999)) # Allow up to 999 hours
+        timer_layout.addWidget(self.countdown_hours_entry, 0, 1)
+
+        timer_layout.addWidget(QLabel("Minutes:"), 1, 0)
+        self.countdown_minutes_entry = QLineEdit("0")
+        self.countdown_minutes_entry.setValidator(QIntValidator(0, 59))
+        timer_layout.addWidget(self.countdown_minutes_entry, 1, 1)
+
+        timer_layout.addWidget(QLabel("Seconds:"), 2, 0)
+        self.countdown_seconds_entry = QLineEdit("0")
+        self.countdown_seconds_entry.setValidator(QIntValidator(0, 59))
+        timer_layout.addWidget(self.countdown_seconds_entry, 2, 1)
+
+        self.start_stop_timer_button = QPushButton("Start Countdown")
+        self.start_stop_timer_button.clicked.connect(self.start_stop_timer)
+        self.start_stop_timer_button.setStyleSheet(
+            "QPushButton {"
+            "   background-color: #FFC107; /* Amber */"
+            "   color: black;"
+            "   padding: 8px 15px;"
+            "   border-radius: 6px;"
+            "   font-size: 14px;"
+            "   font-weight: bold;"
+            "   border: none;"
+            "}"
+            "QPushButton:hover {"
+            "   background-color: #FFA000;"
+            "}"
+        )
+        timer_layout.addWidget(self.start_stop_timer_button, 3, 0, 1, 2)
+
+        self.reset_timer_button = QPushButton("Reset Timer")
+        self.reset_timer_button.clicked.connect(self.reset_timer)
+        self.reset_timer_button.setStyleSheet(
+            "QPushButton {"
+            "   background-color: #607D8B; /* Blue Grey */"
+            "   color: white;"
+            "   padding: 8px 15px;"
+            "   border-radius: 6px;"
+            "   font-size: 14px;"
+            "   font-weight: bold;"
+            "   border: none;"
+            "}"
+            "QPushButton:hover {"
+            "   background-color: #455A64;"
+            "}"
+        )
+        timer_layout.addWidget(self.reset_timer_button, 4, 0, 1, 2)
+
+        # Timer display
+        self.timer_direction_label = QLabel(" ") # Will show arrow
+        self.timer_direction_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.timer_direction_label.setStyleSheet("font-size: 24pt; font-weight: bold;")
+        timer_layout.addWidget(self.timer_direction_label, 5, 0, 1, 2)
+
+        self.timer_display_label = QLabel("00:00:00")
+        self.timer_display_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.timer_display_label.setStyleSheet("font-size: 36pt; font-weight: bold; color: #333;")
+        timer_layout.addWidget(self.timer_display_label, 6, 0, 1, 2)
+
+        timer_column_layout.addWidget(timer_group_box)
+        timer_column_layout.addStretch(1)
+
+
+        # Column 3: Battery Voltage Reference Chart
+        chart_column_layout = QVBoxLayout()
+        self.quick_tools_main_h_layout.addLayout(chart_column_layout)
+
+        battery_chart_group_box = QGroupBox("Battery Voltage Reference")
+        battery_chart_layout = QVBoxLayout(battery_chart_group_box)
+
+        self.battery_chart_display = QTextEdit()
+        self.battery_chart_display.setReadOnly(True)
+        self.battery_chart_display.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap) # Prevent wrapping for table format
+        self.battery_chart_display.setFontPointSize(10) # Adjust font size for readability
+        battery_chart_layout.addWidget(self.battery_chart_display)
+        self.generate_battery_chart_text() # Populate the chart
+
+        chart_column_layout.addWidget(battery_chart_group_box)
+        chart_column_layout.addStretch(1)
+
+    def init_about_ui(self):
+        """Initializes the UI elements for the About tab."""
+        about_group_box = QGroupBox("About BatteryUtils")
+        about_layout = QVBoxLayout(about_group_box)
+        
+        app_name_label = QLabel("<h1>BatteryUtils</h1>")
+        app_name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        about_layout.addWidget(app_name_label)
+
+        version_label = QLabel(f"Version: {self.windowTitle().split(' ')[1]}") # Extract version from window title
+        version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        about_layout.addWidget(version_label)
+
+        author_label = QLabel("Author: Adam of Gobytego")
+        author_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        about_layout.addWidget(author_label)
+
+        description_label = QLabel("A comprehensive tool for e-bike battery management, ride logging, and quick calculations.")
+        description_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        description_label.setWordWrap(True)
+        about_layout.addWidget(description_label)
+
+        # New section for links
+        links_group_box = QGroupBox("Links")
+        links_layout = QVBoxLayout(links_group_box)
+
+        gobytego_label = QTextBrowser()
+        gobytego_label.setOpenExternalLinks(True) # Allow opening links in external browser
+        gobytego_label.setReadOnly(True)
+        gobytego_label.setHtml('<a href="https://gobytego.com">Gobytego Website</a>')
+        gobytego_label.setFixedHeight(30) # Adjust height to fit one line of text
+        links_layout.addWidget(gobytego_label)
+
+        github_label = QTextBrowser()
+        github_label.setOpenExternalLinks(True)
+        github_label.setReadOnly(True)
+        github_label.setHtml('<a href="https://github.com/Gobytego/BatteryUtils">BatteryUtils GitHub Repository</a>')
+        github_label.setFixedHeight(30) # Adjust height
+        links_layout.addWidget(github_label)
+
+        about_layout.addWidget(links_group_box)
+
+        # New section for SuperCycle
+        supercycle_group_box = QGroupBox("Thanks to SuperCycle Creator")
+        supercycle_layout = QVBoxLayout(supercycle_group_box)
+
+        osborntech_label = QTextBrowser()
+        osborntech_label.setOpenExternalLinks(True)
+        osborntech_label.setReadOnly(True)
+        osborntech_label.setHtml('<a href="http://www.osborntech.com/">OsbornTech Website</a>')
+        osborntech_label.setFixedHeight(30) # Adjust height
+        supercycle_layout.addWidget(osborntech_label)
+
+        app_buttons_layout = QHBoxLayout()
+
+        android_button = QPushButton("SuperCycle Android App")
+        android_button.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://play.google.com/store/apps/details?id=com.osborntech.supercycle&hl=en_US&pli=1")))
+        android_button.setStyleSheet(
+            "QPushButton {"
+            "   background-color: #3DDC84; /* Android Green */"
+            "   color: white;"
+            "   padding: 8px 15px;"
+            "   border-radius: 6px;"
+            "   font-size: 14px;"
+            "   font-weight: bold;"
+            "   border: none;"
+            "}"
+            "QPushButton:hover {"
+            "   background-color: #35C977;"
+            "}"
+        )
+        app_buttons_layout.addWidget(android_button)
+
+        ios_button = QPushButton("SuperCycle iOS App")
+        ios_button.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://apps.apple.com/us/app/supercycle-bike-computer/id1549463103")))
+        ios_button.setStyleSheet(
+            "QPushButton {"
+            "   background-color: #007AFF; /* iOS Blue */"
+            "   color: white;"
+            "   padding: 8px 15px;"
+            "   border-radius: 6px;"
+            "   font-size: 14px;"
+            "   font-weight: bold;"
+            "   border: none;"
+            "}"
+            "QPushButton:hover {"
+            "   background-color: #006EDC;"
+            "}"
+        )
+        app_buttons_layout.addWidget(ios_button)
+
+        supercycle_layout.addLayout(app_buttons_layout)
+        about_layout.addWidget(supercycle_group_box)
+
+        copyright_label = QLabel("© 2024-2025 Gobytego. All rights reserved.")
+        copyright_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        about_layout.addWidget(copyright_label)
+
+        self.about_main_layout.addWidget(about_group_box)
+        self.about_main_layout.addStretch(1) # Push content to the top
+
+
+    def convert_percent_to_voltage(self):
+        """Converts a given percentage to voltage using the current profile's battery info."""
+        self.voltage_output_quick.setText("N/A") # Clear previous result
+
+        try:
+            percent = float(self.percent_input_quick.text())
+            if not (0 <= percent <= 100):
+                QMessageBox.warning(self, "Input Error", "Percentage must be between 0 and 100.")
+                return
+
+            min_v, max_v, series_cells = self.get_derived_voltage_range_and_s()
+            if min_v is None or max_v is None or (max_v - min_v) <= 0:
+                QMessageBox.warning(self, "Battery Info Missing", "Please ensure 'Nominal Voltage' and 'Cells in Series' are correctly set in the 'Battery Calculator' tab.")
+                return
+
+            estimated_voltage = min_v + (percent / 100) * (max_v - min_v)
+            self.voltage_output_quick.setText(f"{estimated_voltage:.2f} V")
+
+        except ValueError:
+            QMessageBox.critical(self, "Input Error", "Please enter a valid number for Percentage.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"An unexpected error occurred: {e}")
+
+    def convert_voltage_to_percent(self):
+        """Converts a given voltage to percentage using the current profile's battery info."""
+        self.percentage_output_quick.setText("N/A") # Clear previous result
+
+        try:
+            voltage = float(self.voltage_input_quick.text())
+
+            min_v, max_v, series_cells = self.get_derived_voltage_range_and_s()
+            if min_v is None or max_v is None or (max_v - min_v) <= 0:
+                QMessageBox.warning(self, "Battery Info Missing", "Please ensure 'Nominal Voltage' and 'Cells in Series' are correctly set in the 'Battery Calculator' tab.")
+                return
+            
+            # Allow voltages slightly outside the min/max for practical use, but warn if far off
+            if not (min_v - 10 <= voltage <= max_v + 10): # +/- 10V tolerance for warning
+                QMessageBox.warning(self, "Voltage Warning", f"Entered voltage ({voltage}V) is significantly outside the typical range for your battery ({min_v:.1f}V - {max_v:.1f}V). Result might be inaccurate.")
+
+            percentage = ((voltage - min_v) / (max_v - min_v)) * 100
+            percentage = max(0.0, min(100.0, percentage)) # Clamp between 0 and 100
+
+            self.percentage_output_quick.setText(f"{percentage:.2f} %")
+
+        except ValueError:
+            QMessageBox.critical(self, "Input Error", "Please enter a valid number for Voltage.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"An unexpected error occurred: {e}")
+
+    def start_stop_timer(self):
+        """Starts or stops the countdown/count-up timer."""
+        if self.timer_running:
+            self.timer.stop()
+            self.timer_running = False
+            self.start_stop_timer_button.setText("Resume Timer")
+            self.start_stop_timer_button.setStyleSheet(
+                "QPushButton {"
+                "   background-color: #FFC107; /* Amber */"
+                "   color: black;"
+                "   padding: 8px 15px;"
+                "   border-radius: 6px;"
+                "   font-size: 14px;"
+                "   font-weight: bold;"
+                "   border: none;"
+                "}"
+                "QPushButton:hover {"
+                "   background-color: #FFA000;"
+                "}"
+            )
+        else:
+            try:
+                hours = int(self.countdown_hours_entry.text())
+                minutes = int(self.countdown_minutes_entry.text())
+                seconds = int(self.countdown_seconds_entry.text())
+
+                if self.time_remaining_seconds == 0 and not self.counting_up: # Only set initial if starting fresh countdown
+                    self.time_remaining_seconds = hours * 3600 + minutes * 60 + seconds
+                    self.initial_countdown_seconds = self.time_remaining_seconds # Store for reset
+                    self.counting_up = False # Ensure it starts counting down
+                    self.timer_direction_label.setText("↓")
+                    self.timer_display_label.setStyleSheet("font-size: 36pt; font-weight: bold; color: #333;") # Reset color
+
+                if self.time_remaining_seconds <= 0 and not self.counting_up: # If input was 0, start counting up immediately
+                    self.counting_up = True
+                    self.timer_direction_label.setText("↑")
+                    self.timer_display_label.setStyleSheet("font-size: 36pt; font-weight: bold; color: #007bff;") # Blue for count up
+
+                if self.time_remaining_seconds == 0 and self.counting_up: # If it was already counting up from 0
+                    pass # Continue counting up
+
+                if self.time_remaining_seconds < 0: # Should not happen if clamped, but as a safeguard
+                    self.time_remaining_seconds = 0
+                    self.counting_up = True
+                    self.timer_direction_label.setText("↑")
+                    self.timer_display_label.setStyleSheet("font-size: 36pt; font-weight: bold; color: #007bff;") # Blue for count up
+
+
+                self.timer.start(1000) # Update every second
+                self.timer_running = True
+                self.start_stop_timer_button.setText("Stop Timer")
+                self.start_stop_timer_button.setStyleSheet(
+                    "QPushButton {"
+                    "   background-color: #FF5722; /* Deep Orange */"
+                    "   color: white;"
+                    "   padding: 8px 15px;"
+                    "   border-radius: 6px;"
+                    "   font-size: 14px;"
+                    "   font-weight: bold;"
+                    "   border: none;"
+                    "}"
+                    "QPushButton:hover {"
+                    "   background-color: #E64A19;"
+                    "}"
+                )
+                self.update_timer_display() # Initial display update
+
+            except ValueError:
+                QMessageBox.critical(self, "Input Error", "Please enter valid numbers for hours, minutes, and seconds.")
+            except Exception as e:
+                QMessageBox.critical(self, "Timer Error", f"An unexpected error occurred: {e}")
+
+    def update_timer(self):
+        """Updates the timer display every second."""
+        if not self.counting_up:
+            self.time_remaining_seconds -= 1
+            if self.time_remaining_seconds <= 0:
+                self.time_remaining_seconds = 0
+                self.counting_up = True
+                self.timer_direction_label.setText("↑")
+                self.timer_display_label.setStyleSheet("font-size: 36pt; font-weight: bold; color: #007bff;") # Blue for count up
+                # Optionally play a sound or show a notification when countdown ends
+        else:
+            self.time_remaining_seconds += 1
+            self.timer_direction_label.setText("↑") # Ensure it stays up if it was already up
+            self.timer_display_label.setStyleSheet("font-size: 36pt; font-weight: bold; color: #007bff;") # Blue for count up
+
+        self.update_timer_display()
+
+    def reset_timer(self):
+        """Resets the timer to its initial countdown value or to 00:00:00 if no initial value was set."""
+        self.timer.stop()
+        self.timer_running = False
+        self.counting_up = False
+        self.start_stop_timer_button.setText("Start Countdown")
+        self.start_stop_timer_button.setStyleSheet(
+            "QPushButton {"
+            "   background-color: #FFC107; /* Amber */"
+            "   color: black;"
+            "   padding: 8px 15px;"
+            "   border-radius: 6px;"
+            "   font-size: 14px;"
+            "   font-weight: bold;"
+            "   border: none;"
+            "}"
+            "QPushButton:hover {"
+            "   background-color: #FFA000;"
+            "}"
+        )
+        self.timer_direction_label.setText(" ")
+        self.timer_display_label.setStyleSheet("font-size: 36pt; font-weight: bold; color: #333;")
+
+        # Reset input fields to initial values or 0
+        if self.initial_countdown_seconds > 0:
+            hours = self.initial_countdown_seconds // 3600
+            minutes = (self.initial_countdown_seconds % 3600) // 60
+            seconds = self.initial_countdown_seconds % 60
+            self.countdown_hours_entry.setText(str(hours))
+            self.countdown_minutes_entry.setText(str(minutes))
+            self.countdown_seconds_entry.setText(str(seconds))
+            self.time_remaining_seconds = self.initial_countdown_seconds
+        else:
+            self.countdown_hours_entry.setText("0")
+            self.countdown_minutes_entry.setText("0")
+            self.countdown_seconds_entry.setText("0")
+            self.time_remaining_seconds = 0
+        
+        self.update_timer_display() # Update display to show reset value
+
+    def generate_battery_chart_text(self):
+        """Generates the quick reference battery voltage chart text."""
+        chart_text = "Common Li-ion Battery Voltages (Approx.)\n\n"
+        chart_text += f"{'S-Cells':<10}{'Nominal V':<12}{'0% V':<10}{'25% V':<10}{'50% V':<10}{'75% V':<10}{'100% V':<10}\n"
+        chart_text += "-" * 75 + "\n"
+
+        common_s_values = [10, 13, 14, 16, 20] # Common series cell counts
+
+        for s_cells in common_s_values:
+            nominal_v = s_cells * self.CELL_VOLTAGE_NOMINAL
+            empty_v = s_cells * self.CELL_VOLTAGE_EMPTY
+            full_v = s_cells * self.CELL_VOLTAGE_FULL
+
+            # Calculate intermediate voltages
+            v_range = full_v - empty_v
+            v_25 = empty_v + (v_range * 0.25)
+            v_50 = empty_v + (v_range * 0.50)
+            v_75 = empty_v + (v_range * 0.75)
+
+            chart_text += (
+                f"{s_cells:<10}{nominal_v:<12.1f}"
+                f"{empty_v:<10.1f}{v_25:<10.1f}{v_50:<10.1f}{v_75:<10.1f}{full_v:<10.1f}\n"
+            )
+        
+        chart_text += "\nNote: These are approximate values. Actual voltages may vary."
+        self.battery_chart_display.setText(chart_text)
 
 
     def closeEvent(self, event):
@@ -993,25 +1548,6 @@ class BatteryCalculatorGUI(QWidget):
             self.capacity_label.setText("Battery Capacity (Wh):")
         elif selected_type == "Ah":
             self.capacity_label.setText("Battery Capacity (Ah):")
-
-    def format_time_to_hours_minutes(self, decimal_hours):
-        """Converts a float representing hours into a formatted 'X hours Y min' string."""
-        if decimal_hours is None or decimal_hours < 0:
-            return "N/A"
-        
-        total_minutes = round(decimal_hours * 60)
-        hours = total_minutes // 60
-        minutes = total_minutes % 60
-
-        if hours > 0 and minutes > 0:
-            return f"{hours} hour{'s' if hours > 1 else ''} {minutes} min"
-        elif hours > 0:
-            return f"{hours} hour{'s' if hours > 1 else ''}"
-        elif minutes > 0:
-            return f"{minutes} min"
-        else:
-            return "0 min"
-
 
     def calculate_all(self):
         # Update breakdown first to show current input values, even if calculations fail
@@ -1643,6 +2179,17 @@ class BatteryCalculatorGUI(QWidget):
         self.last_ride_data = {} # Clear the stored data
         self.update_last_ride_display()
 
+        # Clear quick tools fields
+        self.percent_input_quick.clear()
+        self.voltage_output_quick.setText("N/A")
+        self.voltage_input_quick.clear()
+        self.percentage_output_quick.setText("N/A")
+        # Clear timer fields and reset timer
+        self.countdown_hours_entry.setText("0")
+        self.countdown_minutes_entry.setText("0")
+        self.countdown_seconds_entry.setText("0")
+        self.reset_timer() # Use the dedicated reset method for the timer
+
 
     def export_breakdown_to_file(self):
         """Exports the current breakdown information to a text file."""
@@ -1842,10 +2389,10 @@ class BatteryCalculatorGUI(QWidget):
         for row_idx, ride in enumerate(current_profile_log):
             self.ride_log_table.setItem(row_idx, 0, QTableWidgetItem(ride.get("date", "N/A")))
             self.ride_log_table.setItem(row_idx, 1, QTableWidgetItem(f"{ride.get('distance_miles', 0):.2f}"))
-            self.ride_log_table.setItem(row_idx, 2, QTableWidgetItem(f"{ride.get('start_percent', 0):.2f}%"))
-            self.ride_log_table.setItem(row_idx, 3, QTableWidgetItem(f"{ride.get('end_percent', 0):.2f}%"))
-            self.ride_log_table.setItem(row_idx, 4, QTableWidgetItem(f"{ride.get('wh_consumed', 0):.2f}"))
-            self.ride_log_table.setItem(row_idx, 5, QTableWidgetItem(f"{ride.get('wh_per_mile', 0):.2f}"))
+            self.ride_log_table.setItem(row_idx, 2, QTableWidgetItem(f"{ride.get('start_percent', 'N/A')}" if ride.get('start_percent') != 'N/A' else 'N/A')) # Handle N/A
+            self.ride_log_table.setItem(row_idx, 3, QTableWidgetItem(f"{ride.get('end_percent', 'N/A')}" if ride.get('end_percent') != 'N/A' else 'N/A')) # Handle N/A
+            self.ride_log_table.setItem(row_idx, 4, QTableWidgetItem(f"{ride.get('wh_consumed', 'N/A')}" if ride.get('wh_consumed') != 'N/A' else 'N/A')) # Handle N/A
+            self.ride_log_table.setItem(row_idx, 5, QTableWidgetItem(f"{ride.get('wh_per_mile', 'N/A')}" if ride.get('wh_per_mile') != 'N/A' else 'N/A')) # Handle N/A
             self.ride_log_table.setItem(row_idx, 6, QTableWidgetItem(ride.get("riding_style", "N/A"))) # NEW: Set Riding Style
             self.ride_log_table.setItem(row_idx, 7, QTableWidgetItem(ride.get("notes", ""))) # Shifted to column 7
 
@@ -1893,26 +2440,31 @@ class BatteryCalculatorGUI(QWidget):
         
         total_wh_consumed = 0.0
         total_distance_miles = 0.0
+        valid_rides_for_average = 0
 
         for ride in current_profile_log:
             try:
-                wh = float(ride.get("wh_consumed", 0))
-                dist = float(ride.get("distance_miles", 0))
-                total_wh_consumed += wh
-                total_distance_miles += dist
+                wh = ride.get("wh_consumed")
+                dist = ride.get("distance_miles")
+
+                # Only include rides with valid numeric wh_consumed and distance for average calculation
+                if isinstance(wh, (int, float)) and wh > 0 and isinstance(dist, (int, float)) and dist > 0:
+                    total_wh_consumed += wh
+                    total_distance_miles += dist
+                    valid_rides_for_average += 1
             except (ValueError, TypeError):
                 # Skip invalid entries, but could log a warning if needed
                 continue
 
-        if total_distance_miles > 0:
+        if total_distance_miles > 0 and valid_rides_for_average > 0:
             average_wh_per_mile = total_wh_consumed / total_distance_miles
             average_miles_per_wh = 1 / average_wh_per_mile
             self.average_wh_per_mile_label.setText(f"Average Wh/mile: {average_wh_per_mile:.2f}")
             self.average_miles_per_wh_label.setText(f"Average Miles/Wh: {average_miles_per_wh:.2f}")
             self.logged_wh_per_mile_average = average_wh_per_mile # Store for apply function
         else:
-            self.average_wh_per_mile_label.setText("Average Wh/mile: N/A (No rides logged or invalid data)")
-            self.average_miles_per_wh_label.setText("Average Miles/Wh: N/A (No rides logged or invalid data)")
+            self.average_wh_per_mile_label.setText("Average Wh/mile: N/A (No valid rides logged or invalid data)")
+            self.average_miles_per_wh_label.setText("Average Miles/Wh: N/A (No valid rides logged or invalid data)")
             self.logged_wh_per_mile_average = 0.0 # Reset stored average
 
     def apply_logged_efficiency_to_calculator(self):
@@ -1942,9 +2494,9 @@ class BatteryCalculatorGUI(QWidget):
         """Updates the labels in the 'Last Logged Ride' section of the Breakdown column."""
         if self.last_ride_data:
             self.breakdown_last_ride_date_label.setText(self.last_ride_data.get('date', 'N/A'))
-            self.breakdown_last_ride_distance_label.setText(f"{self.last_ride_data.get('distance_miles', 0):.2f} miles")
-            self.breakdown_last_ride_wh_label.setText(f"{self.last_ride_data.get('wh_consumed', 0):.2f} Wh")
-            self.breakdown_last_ride_wh_per_mile_label.setText(f"{self.last_ride_data.get('wh_per_mile', 0):.2f} Wh/mile")
+            self.breakdown_last_ride_distance_label.setText(f"{self.last_ride_data.get('distance_miles', 'N/A')} miles")
+            self.breakdown_last_ride_wh_label.setText(f"{self.last_ride_data.get('wh_consumed', 'N/A')} Wh")
+            self.breakdown_last_ride_wh_per_mile_label.setText(f"{self.last_ride_data.get('wh_per_mile', 'N/A')} Wh/mile")
         else:
             self.breakdown_last_ride_date_label.setText("N/A")
             self.breakdown_last_ride_distance_label.setText("N/A")
@@ -1995,10 +2547,10 @@ class BatteryCalculatorGUI(QWidget):
                         # Attempt to gracefully handle missing keys by setting defaults if possible
                         ride_entry.setdefault("date", "N/A")
                         ride_entry.setdefault("distance_miles", 0.0)
-                        ride_entry.setdefault("start_percent", 0.0)
-                        ride_entry.setdefault("end_percent", 0.0)
-                        ride_entry.setdefault("wh_consumed", 0.0)
-                        ride_entry.setdefault("wh_per_mile", 0.0)
+                        ride_entry.setdefault("start_percent", "N/A") # Set to N/A for consistency
+                        ride_entry.setdefault("end_percent", "N/A")   # Set to N/A for consistency
+                        ride_entry.setdefault("wh_consumed", "N/A")  # Set to N/A for consistency
+                        ride_entry.setdefault("wh_per_mile", "N/A")  # Set to N/A for consistency
                         ride_entry.setdefault("riding_style", "N/A")
                         ride_entry.setdefault("notes", "") # Also ensure notes field is present
 
@@ -2043,6 +2595,71 @@ class BatteryCalculatorGUI(QWidget):
                 QMessageBox.critical(self, "Import Error", f"An unexpected error occurred during import: {e}")
         else:
             QMessageBox.information(self, "Import Cancelled", "Ride log import cancelled.")
+
+    def import_from_supercycle_app(self):
+        """
+        Imports ride data from a JSON file exported by a "SuperCycle App".
+        Parses 'gpsDist' for distance and 'tmStart'/'tmStop' for timestamps.
+        Populates the "Log New Ride" fields and prompts the user to complete the entry.
+        """
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Import from SuperCycle App", "", "JSON files (*.json);;All files (*.*)"
+        )
+
+        if not file_path:
+            QMessageBox.information(self, "Import Cancelled", "Import from SuperCycle App cancelled.")
+            return
+
+        try:
+            with open(file_path, 'r') as f:
+                supercycle_data = json.load(f)
+            
+            # Expecting a top-level "ride" object
+            ride_summary = supercycle_data.get("ride")
+            if not ride_summary:
+                QMessageBox.critical(self, "Import Error", "Invalid SuperCycle file format. 'ride' object not found.")
+                return
+
+            # Extract data
+            gps_distance_meters = ride_summary.get("gpsDist", 0.0)
+            tm_start_ms = ride_summary.get("tmStart", 0)
+            tm_stop_ms = ride_summary.get("tmStop", 0)
+            ride_name = ride_summary.get("name", "Imported Ride") # Use ride name if available
+
+            if gps_distance_meters <= 0 or tm_start_ms <= 0 or tm_stop_ms <= 0:
+                QMessageBox.warning(self, "Import Warning", "Skipping import: Missing or invalid distance/timestamps in SuperCycle file.")
+                return
+
+            # Convert distance to miles
+            distance_miles = gps_distance_meters * self.METERS_TO_MILES
+
+            # Convert timestamps to QDateTime for the QDateTimeEdit widget
+            start_datetime_qdt = QDateTime.fromMSecsSinceEpoch(tm_start_ms)
+            
+            # For notes, include the duration or original name
+            duration_seconds = (QDateTime.fromMSecsSinceEpoch(tm_stop_ms).toSecsSinceEpoch() - start_datetime_qdt.toSecsSinceEpoch())
+            duration_minutes = duration_seconds / 60
+            notes = f"Imported from SuperCycle App. Original Name: '{ride_name}'. Duration: {duration_minutes:.1f} min."
+
+            # Populate the "Log New Ride" fields
+            self.ride_date_edit.setDateTime(start_datetime_qdt)
+            self.ride_distance_entry.setText(f"{distance_miles:.2f}")
+            self.ride_notes_entry.setText(notes)
+
+            # Switch to the Ride Log tab to show the populated fields
+            self.tab_widget.setCurrentWidget(self.ride_log_tab)
+
+            QMessageBox.information(self, "Import Successful",
+                                    "Basic ride data imported successfully into 'Log New Ride' section.\n\n"
+                                    "Please fill in the 'Start Battery State', 'End Battery State', and 'Riding Style' fields, "
+                                    "then click the 'Log Ride' button to save the full entry.")
+
+        except FileNotFoundError:
+            QMessageBox.critical(self, "Import Error", "File not found.")
+        except json.JSONDecodeError:
+            QMessageBox.critical(self, "Import Error", "Invalid JSON format in the selected file. Ensure it's a valid SuperCycle App export.")
+        except Exception as e:
+            QMessageBox.critical(self, "Import Error", f"An unexpected error occurred during import: {e}")
 
 
 if __name__ == "__main__":
