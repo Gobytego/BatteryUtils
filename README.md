@@ -26,7 +26,7 @@ a bunch more to come...
 <img align="center" width="500" src="https://github.com/Gobytego/BatteryUtils/blob/main/screenshot02.png">
 
 to run the batteryutils.py in python you will need the following installed:
- - pyqt
+ - pyqt6
 
 so far this has only been tested on Linux if anyone wants to test on Mac or Windows be my guest.  
 
