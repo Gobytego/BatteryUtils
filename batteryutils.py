@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QComboBox, QMessageBox,
     QTextEdit, QRadioButton, QFrame, QGroupBox, QInputDialog, QFileDialog, QButtonGroup,
     QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView, QDateTimeEdit,
-    QTextBrowser # Import QTextBrowser for clickable links
+    QTextBrowser, QCheckBox # Import QTextBrowser for clickable links, QCheckBox for new feature
 )
 from PyQt6.QtCore import Qt, QTimer, QDateTime, QUrl # Import QUrl for opening links
 from PyQt6.QtGui import QIntValidator, QDesktopServices # Import QDesktopServices for opening links
@@ -56,9 +56,9 @@ class BatteryCalculatorGUI(QWidget):
     def __init__(self):
         super().__init__()
         # Changed window title to reflect "BatteryUtils" and version number
-        self.setWindowTitle("BatteryUtils v1.07.01") # Version bumped from 1.06.05 to 1.07.01
+        self.setWindowTitle("BatteryUtils v1.07.12") # Version bumped from 1.07.11 to 1.07.12
 
-        self.setGeometry(100, 100, 1200, 750) # x, y, width, height for the window, adjusted for three columns
+        self.setGeometry(100, 100, 950, 650) # x, y, width, height for the window, adjusted for three columns and smaller overall height
 
         # Store all profiles loaded from the settings file
         self.all_profiles = {}
@@ -68,6 +68,7 @@ class BatteryCalculatorGUI(QWidget):
         # New variables for logged efficiency override
         self.use_logged_efficiency = False
         self.logged_wh_per_mile_average = 0.0
+        self.active_logged_efficiency_value = 0.0 # Holds the actual Wh/mile value to use when logged efficiency is active
 
         # New flag to suppress QMessageBox during initial load
         self.is_initializing = True 
@@ -77,7 +78,7 @@ class BatteryCalculatorGUI(QWidget):
         self.calculated_range_label = QLabel("")
         self.remaining_range_label = QLabel("")
         self.remaining_charge_percentage_label = QLabel("")
-        self.charge_time_label = QLabel("")
+        self.charge_time_label = QLabel("") # This will be the total charge time with options
         self.miles_per_wh_label = QLabel("")
         self.miles_per_ah_label = QLabel("")
         self.percentage_after_charge_label = QLabel("")
@@ -92,6 +93,11 @@ class BatteryCalculatorGUI(QWidget):
         # NEW: Initialize label for full range to cutoff
         self.full_range_to_cutoff_label = QLabel("")
 
+        # NEW: Labels for charge time breakdown
+        self.base_charge_time_label = QLabel("")
+        self.conditioned_charge_time_label = QLabel("")
+        self.charge_time_difference_label = QLabel("")
+
 
         # Initialize breakdown labels to avoid AttributeError
         self.breakdown_voltage_label = QLabel("")
@@ -104,19 +110,25 @@ class BatteryCalculatorGUI(QWidget):
         self.breakdown_charge_rate_label = QLabel("")
         self.breakdown_preferred_cutoff_label = QLabel("")
         self.breakdown_preferred_cutoff_voltage_label = QLabel("")
+        # FIX: Initialize new breakdown labels here
+        self.breakdown_charge_throttle_label = QLabel("")
+        self.breakdown_throttled_rate_label = QLabel("")
+        self.breakdown_bms_conditioning_label = QLabel("")
+
         self.efficiency_source_label = QLabel("Predicted") # Also initialized here as it's modified early
 
         # New label for the dynamically updated "Range to cutoff of XX%:" text
         self.range_to_cutoff_title_label = QLabel("Range to cutoff of:")
 
-        # NEW: Labels for Last Ride Results in Breakdown
-        self.breakdown_last_ride_date_label = QLabel("N/A")
-        self.breakdown_last_ride_distance_label = QLabel("N/A")
-        self.breakdown_last_ride_wh_label = QLabel("N/A")
-        self.breakdown_last_ride_wh_per_mile_label = QLabel("N/A")
-        
         # Instance variable to hold the last ride data for persistence
         self.last_ride_data = {}
+
+        # NEW: Labels for Logged Rides Info group box on main tab (now in breakdown column)
+        self.logged_last_ride_wh_per_mile_label = QLabel("Last Ride Wh/mile: N/A")
+        self.logged_last_ride_miles_per_wh_label = QLabel("Last Ride Miles/Wh: N/A")
+        self.logged_average_wh_per_mile_label = QLabel("Average Wh/mile: N/A")
+        self.logged_average_miles_per_wh_label = QLabel("Average Miles/Wh: N/A")
+
 
         # Timer specific variables
         self.timer = QTimer(self)
@@ -125,6 +137,13 @@ class BatteryCalculatorGUI(QWidget):
         self.counting_up = False
         self.timer_running = False
         self.initial_countdown_seconds = 0 # Store initial value for reset
+        
+        # NEW: Variables for timer battery state estimation
+        self.timer_initial_charge_percentage = None
+        self.timer_total_charge_time_hours = None
+        self.timer_battery_min_v = None
+        self.timer_battery_max_v = None
+        self.timer_start_datetime = None
 
 
         self.init_ui()
@@ -184,14 +203,7 @@ class BatteryCalculatorGUI(QWidget):
         self.init_ride_log_ui() # Call method to build ride log UI
         self.tab_widget.addTab(self.ride_log_tab, "Ride Log")
 
-        # --- Tab 3: Quick Tools (NEW) ---
-        self.quick_tools_tab = QWidget()
-        # This QHBoxLayout will hold the three main columns for Quick Tools
-        self.quick_tools_main_h_layout = QHBoxLayout(self.quick_tools_tab)
-        self.init_quick_tools_ui() # Call method to build quick tools UI
-        self.tab_widget.addTab(self.quick_tools_tab, "Quick Tools")
-
-        # --- Tab 4: About (NEW) ---
+        # --- Tab 3: About (Existing content) ---
         self.about_tab = QWidget()
         self.about_main_layout = QVBoxLayout(self.about_tab)
         self.init_about_ui() # Call method to build about UI
@@ -242,12 +254,6 @@ class BatteryCalculatorGUI(QWidget):
         self.series_cells_entry.textChanged.connect(self.update_voltage_info_labels)
         self.series_cells_entry.setPlaceholderText("e.g., 13, 14")
 
-        # Info labels for min/max voltage based on series cells
-        self.max_voltage_info_label = QLabel("Full Charge V: N/A")
-        self.battery_info_layout.addWidget(self.max_voltage_info_label, 2, 0, 1, 2)
-        self.min_voltage_info_label = QLabel("Empty V: N/A")
-        self.battery_info_layout.addWidget(self.min_voltage_info_label, 3, 0, 1, 2)
-
         # Initial call to set visibility and labels
         self.update_voltage_info_labels()
 
@@ -287,9 +293,6 @@ class BatteryCalculatorGUI(QWidget):
         self.charge_input_method_group.addButton(self.percent_radio, 0) # ID 0 for percentage
         self.charge_input_method_group.addButton(self.voltage_radio, 1) # ID 1 for voltage
 
-        self.percent_radio.toggled.connect(self.toggle_charge_input)
-        self.voltage_radio.toggled.connect(self.toggle_charge_input)
-
         radio_h_layout = QHBoxLayout()
         radio_h_layout.addWidget(self.percent_radio)
         radio_h_layout.addWidget(self.voltage_radio)
@@ -305,6 +308,9 @@ class BatteryCalculatorGUI(QWidget):
         # These will be added to layout in toggle_charge_input if voltage is selected
 
         self.percent_radio.setChecked(True) # Default for new profiles
+        self.percent_radio.toggled.connect(self.toggle_charge_input)
+        self.voltage_radio.toggled.connect(self.toggle_charge_input)
+
 
         # NEW: Preferred Low Battery Cutoff
         self.charging_layout.addWidget(QLabel("Preferred Cutoff (%):"), 4, 0)
@@ -312,7 +318,27 @@ class BatteryCalculatorGUI(QWidget):
         self.preferred_cutoff_entry.textChanged.connect(self.calculate_all) # Recalculate on cutoff change
         self.charging_layout.addWidget(self.preferred_cutoff_entry, 4, 1)
 
+        # NEW: Charge Throttle
+        self.charging_layout.addWidget(QLabel("Charge Throttle (%):"), 5, 0)
+        self.charge_throttle_combo = QComboBox()
+        self.charge_throttle_combo.addItems(["None", "5%", "10%", "15%", "20%"])
+        self.charge_throttle_combo.currentTextChanged.connect(self.calculate_all)
+        self.charging_layout.addWidget(self.charge_throttle_combo, 5, 1)
 
+        self.charging_layout.addWidget(QLabel("Throttled Rate (A):"), 6, 0)
+        self.throttled_rate_entry = QLineEdit("")
+        self.throttled_rate_entry.setPlaceholderText("e.g., 1, 2")
+        self.throttled_rate_entry.textChanged.connect(self.calculate_all)
+        self.charging_layout.addWidget(self.throttled_rate_entry, 6, 1)
+
+        # NEW: BMS Conditioning
+        self.charging_layout.addWidget(QLabel("BMS Conditioning Time:"), 7, 0)
+        self.bms_conditioning_combo = QComboBox()
+        self.bms_conditioning_combo.addItems(["None", "15 min", "30 min", "1 hour"])
+        self.bms_conditioning_combo.currentTextChanged.connect(self.calculate_all)
+        self.charging_layout.addWidget(self.bms_conditioning_combo, 7, 1)
+
+        # The charge timer group box is now added to results_display_layout, not here.
         self.input_layout.addWidget(self.charging_group_box, 2, 0, 1, 2)
 
         # --- Motor and Bike Information ---
@@ -399,6 +425,35 @@ class BatteryCalculatorGUI(QWidget):
         self.range_layout.addWidget(self.full_range_to_cutoff_label, 3, 1)
         self.range_layout.addWidget(self.calculated_range_unit_label, 3, 2) # Use same unit label
 
+        # NEW: Miles/Wh and Miles/Ah moved here (from old "Other" box)
+        self.range_layout.addWidget(QLabel("Miles/Wh:"), 4, 0)
+        self.range_layout.addWidget(self.miles_per_wh_label, 4, 1)
+
+        self.range_layout.addWidget(QLabel("Miles/Ah:"), 5, 0)
+        self.range_layout.addWidget(self.miles_per_ah_label, 5, 1)
+
+        # NEW: Reset Efficiency Button (reinstated)
+        self.reset_efficiency_button = QPushButton("Reset Efficiency")
+        self.reset_efficiency_button.clicked.connect(lambda: self.reset_efficiency_source(show_message=True))
+        self.reset_efficiency_button.setStyleSheet(
+            "QPushButton {"
+            "   background-color: #f0ad4e; /* Orange-yellow */"
+            "   color: white;"
+            "   padding: 8px 15px;"
+            "   border-radius: 6px;"
+            "   font-size: 12px;"
+            "   font-weight: bold;"
+            "   border: none;"
+            "}"
+            "QPushButton:hover {"
+            "   background-color: #ec971f;"
+            "}"
+            "QPushButton:pressed {"
+            "   background-color: #d58512;"
+            "}"
+        )
+        self.range_layout.addWidget(self.reset_efficiency_button, 6, 0, 1, 3) # Row 6, Col 0, span 1 row, span 3 columns
+
 
         # 2. State Group Box
         self.state_group_box = QGroupBox("-- State --")
@@ -422,112 +477,165 @@ class BatteryCalculatorGUI(QWidget):
         self.charge_layout.addWidget(self.remaining_charge_percentage_label, 0, 1)
         self.charge_layout.addWidget(QLabel("%"), 0, 2)
 
-        self.charge_layout.addWidget(QLabel("Estimated Charge Time to 100%:"), 1, 0)
-        self.charge_layout.addWidget(self.charge_time_label, 1, 1)
+        # Base Charge Time
+        self.charge_layout.addWidget(QLabel("Base Charge Time (to 100%):"), 1, 0)
+        self.charge_layout.addWidget(self.base_charge_time_label, 1, 1, 1, 2) # Span 2 columns
 
-        self.charge_layout.addWidget(QLabel("Charge Duration:"), 2, 0)
-        self.charge_layout.addWidget(self.results_charge_duration_label, 2, 1)
+        # Total Charge Time (with options)
+        self.charge_layout.addWidget(QLabel("Total Charge Time (with options):"), 2, 0)
+        self.charge_layout.addWidget(self.charge_time_label, 2, 1, 1, 2) # Span 2 columns
 
-        self.charge_layout.addWidget(QLabel("Percentage after set charge duration:"), 3, 0)
-        self.charge_layout.addWidget(self.percentage_after_charge_label, 3, 1)
-        self.charge_layout.addWidget(QLabel("%"), 3, 2)
+        # Additional Time (due to options)
+        self.charge_layout.addWidget(QLabel("Additional Time (due to options):"), 3, 0)
+        self.charge_layout.addWidget(self.charge_time_difference_label, 3, 1, 1, 2) # Span 2 columns
 
-        # 4. Other Group Box
-        self.other_group_box = QGroupBox("-- Other --")
-        self.other_layout = QGridLayout(self.other_group_box)
-        self.results_display_layout.addWidget(self.other_group_box)
+        self.charge_layout.addWidget(QLabel("Charge Duration:"), 4, 0) # Shifted from 2 to 4
+        self.charge_layout.addWidget(self.results_charge_duration_label, 4, 1)
 
-        self.other_layout.addWidget(QLabel("Miles/Wh:"), 0, 0)
-        self.other_layout.addWidget(self.miles_per_wh_label, 0, 1)
+        self.charge_layout.addWidget(QLabel("Percentage after set charge duration:"), 5, 0) # Shifted from 3 to 5
+        self.charge_layout.addWidget(self.percentage_after_charge_label, 5, 1)
+        self.charge_layout.addWidget(QLabel("%"), 5, 2)
 
-        self.other_layout.addWidget(QLabel("Miles/Ah:"), 1, 0)
-        self.other_layout.addWidget(self.miles_per_ah_label, 1, 1)
+        # --- NEW: Charge Timer Group Box (moved to results column, under --Charge--) ---
+        self.charge_timer_group_box = QGroupBox("Charge Timer")
+        self.charge_timer_layout = QVBoxLayout(self.charge_timer_group_box) # Changed to QVBoxLayout for overall structure
 
-        self.other_layout.addWidget(QLabel("Efficiency Source:"), 2, 0)
-        self.efficiency_source_label.setStyleSheet("font-style: italic; color: #555;")
-        self.other_layout.addWidget(self.efficiency_source_label, 2, 1, 1, 2)
+        # Input fields (Hours, Minutes, Seconds) - side by side
+        input_time_h_layout = QHBoxLayout()
+        input_time_h_layout.addWidget(QLabel("H:"))
+        self.countdown_hours_entry = QLineEdit("0")
+        self.countdown_hours_entry.setValidator(QIntValidator(0, 999))
+        self.countdown_hours_entry.setFixedWidth(40) # Smaller input field
+        self.countdown_hours_entry.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        input_time_h_layout.addWidget(self.countdown_hours_entry)
 
-        self.reset_efficiency_button = QPushButton("Reset Efficiency")
-        self.reset_efficiency_button.clicked.connect(self.reset_efficiency_source)
-        self.reset_efficiency_button.setStyleSheet(
+        input_time_h_layout.addWidget(QLabel("M:"))
+        self.countdown_minutes_entry = QLineEdit("0")
+        self.countdown_minutes_entry.setValidator(QIntValidator(0, 59))
+        self.countdown_minutes_entry.setFixedWidth(40) # Smaller input field
+        self.countdown_minutes_entry.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        input_time_h_layout.addWidget(self.countdown_minutes_entry)
+
+        input_time_h_layout.addWidget(QLabel("S:"))
+        self.countdown_seconds_entry = QLineEdit("0")
+        self.countdown_seconds_entry.setValidator(QIntValidator(0, 59))
+        self.countdown_seconds_entry.setFixedWidth(40) # Smaller input field
+        self.countdown_seconds_entry.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        input_time_h_layout.addWidget(self.countdown_seconds_entry)
+        input_time_h_layout.addStretch(1) # Push to left
+
+        self.charge_timer_layout.addLayout(input_time_h_layout) # Added to QVBoxLayout
+
+        # Buttons (Start/Stop, Reset) - side by side, smaller
+        buttons_timer_h_layout = QHBoxLayout()
+        self.start_stop_timer_button = QPushButton("Start/Stop") # Shorter text
+        self.start_stop_timer_button.clicked.connect(self.start_stop_timer)
+        self.start_stop_timer_button.setStyleSheet(
             "QPushButton {"
-            "   background-color: #f0ad4e; /* Orange */"
-            "   color: white;"
-            "   padding: 5px 10px;"
-            "   border-radius: 5px;"
-            "   font-size: 12px;"
+            "   background-color: #FFC107; /* Amber */"
+            "   color: black;"
+            "   padding: 5px 10px;" # Smaller padding
+            "   border-radius: 6px;"
+            "   font-size: 12px;" # Smaller font
+            "   font-weight: bold;"
             "   border: none;"
             "}"
             "QPushButton:hover {"
-            "   background-color: #ec971f;"
+            "   background-color: #FFA000;"
             "}"
         )
-        self.other_layout.addWidget(self.reset_efficiency_button, 3, 0, 1, 3, Qt.AlignmentFlag.AlignRight)
+        buttons_timer_h_layout.addWidget(self.start_stop_timer_button)
+
+        self.reset_timer_button = QPushButton("Reset") # Shorter text
+        self.reset_timer_button.clicked.connect(self.reset_timer)
+        self.reset_timer_button.setStyleSheet(
+            "QPushButton {"
+            "   background-color: #607D8B; /* Blue Grey */"
+            "   color: white;"
+            "   padding: 5px 10px;" # Smaller padding
+            "   border-radius: 6px;"
+            "   font-size: 12px;" # Smaller font
+            "   font-weight: bold;"
+            "   border: none;"
+            "}"
+            "QPushButton:hover {"
+            "   background-color: #455A64;"
+            "}"
+        )
+        buttons_timer_h_layout.addWidget(self.reset_timer_button)
+        buttons_timer_h_layout.addStretch(1) # Push to left
+
+        self.charge_timer_layout.addLayout(buttons_timer_h_layout) # Added to QVBoxLayout
+
+        # Timer display and direction (now horizontal)
+        timer_display_h_layout = QHBoxLayout()
+        timer_display_h_layout.addStretch(1) # Push to center
+        self.timer_display_label = QLabel("00:00:00")
+        self.timer_display_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.timer_display_label.setStyleSheet("font-size: 24pt; font-weight: bold; color: #333;") # Even smaller font
+        timer_display_h_layout.addWidget(self.timer_display_label)
+
+        self.timer_direction_label = QLabel(" ")
+        self.timer_direction_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter) # Align arrow left, center vertically
+        self.timer_direction_label.setStyleSheet("font-size: 16pt; font-weight: bold; margin-left: 5px;") # Add some margin
+        timer_display_h_layout.addWidget(self.timer_direction_label)
+        timer_display_h_layout.addStretch(1) # Push to center
+
+        self.charge_timer_layout.addLayout(timer_display_h_layout) # Added the new horizontal layout
+
+        # Checkbox for estimated battery state
+        self.show_battery_state_checkbox = QCheckBox("Show Est. Battery State") # Shorter text
+        self.show_battery_state_checkbox.toggled.connect(self.toggle_timer_battery_display)
+        self.charge_timer_layout.addWidget(self.show_battery_state_checkbox)
+
+        # Estimated battery state labels - side by side
+        est_battery_state_h_layout = QHBoxLayout()
+        self.timer_estimated_percentage_label = QLabel("Est. %: N/A")
+        self.timer_estimated_percentage_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.timer_estimated_percentage_label.setStyleSheet("font-weight: bold; font-size: 10pt; color: #006400;")
+        est_battery_state_h_layout.addWidget(self.timer_estimated_percentage_label)
+        # self.timer_estimated_percentage_label.hide() # Hide on init, show when checkbox is checked
+
+        self.timer_estimated_voltage_label = QLabel("Est. V: N/A")
+        self.timer_estimated_voltage_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.timer_estimated_voltage_label.setStyleSheet("font-weight: bold; font-size: 10pt; color: #006400;")
+        est_battery_state_h_layout.addWidget(self.timer_estimated_voltage_label)
+        # self.timer_estimated_voltage_label.hide() # Hide on init, show when checkbox is checked
+
+        self.charge_timer_layout.addLayout(est_battery_state_h_layout) # Add the new horizontal layout
+        # Hide these labels initially
+        self.timer_estimated_percentage_label.hide()
+        self.timer_estimated_voltage_label.hide()
 
 
-        # --- Breakdown Column (placed in breakdown_display_layout) ---
-        self.breakdown_group_box = QGroupBox("--- Breakdown ---")
-        self.breakdown_group_layout = QGridLayout(self.breakdown_group_box) # Layout for content WITHIN the breakdown group box
+        # Add the new Charge Timer group box to the results_display_layout
+        self.results_display_layout.addWidget(self.charge_timer_group_box)
 
-        self.breakdown_group_layout.addWidget(QLabel("Nominal Voltage:"), 0, 0)
-        self.breakdown_group_layout.addWidget(self.breakdown_voltage_label, 0, 1)
+        # --- NEW: Logged Rides Info Group Box (moved to breakdown column) ---
+        self.logged_rides_info_group_box = QGroupBox("--- Logged Rides Info ---")
+        self.logged_rides_info_layout = QVBoxLayout(self.logged_rides_info_group_box)
 
-        self.breakdown_group_layout.addWidget(QLabel("Cells in Series (S):"), 1, 0)
-        self.breakdown_group_layout.addWidget(self.breakdown_series_cells_label, 1, 1)
+        # Last Ride Info
+        self.logged_rides_info_layout.addWidget(QLabel("<b>Last Ride:</b>"))
+        self.logged_rides_info_layout.addWidget(self.logged_last_ride_wh_per_mile_label)
+        self.logged_rides_info_layout.addWidget(self.logged_last_ride_miles_per_wh_label)
 
-        self.breakdown_group_layout.addWidget(QLabel("Min/Max Voltage (Calculated):"), 2, 0)
-        self.breakdown_group_layout.addWidget(self.breakdown_min_max_voltage_label, 2, 1)
+        # Average Info
+        self.logged_rides_info_layout.addWidget(QLabel("<b>Average of All Logged Rides:</b>"))
+        self.logged_rides_info_layout.addWidget(self.logged_average_wh_per_mile_label)
+        self.logged_rides_info_layout.addWidget(self.logged_average_miles_per_wh_label)
 
-        self.breakdown_group_layout.addWidget(QLabel("Ah:"), 3, 0)
-        self.breakdown_group_layout.addWidget(self.breakdown_ah_label, 3, 1)
-
-        self.breakdown_group_layout.addWidget(QLabel("Wh:"), 4, 0)
-        self.breakdown_group_layout.addWidget(self.breakdown_wh_label, 4, 1)
-
-        self.breakdown_group_layout.addWidget(QLabel("Motor Watts:"), 5, 0)
-        self.breakdown_group_layout.addWidget(self.breakdown_motor_watts_label, 5, 1)
-
-        self.breakdown_group_layout.addWidget(QLabel("Wheel Diameter:"), 6, 0)
-        self.breakdown_group_layout.addWidget(self.breakdown_wheel_diameter_label, 6, 1)
-
-        self.breakdown_group_layout.addWidget(QLabel("Charge Rate:"), 7, 0)
-        self.breakdown_group_layout.addWidget(self.breakdown_charge_rate_label, 7, 1)
-        
-        self.breakdown_group_layout.addWidget(QLabel("Preferred Cutoff %:"), 8, 0)
-        self.breakdown_group_layout.addWidget(self.breakdown_preferred_cutoff_label, 8, 1)
-
-        self.breakdown_group_layout.addWidget(QLabel("Preferred Cutoff V:"), 9, 0)
-        self.breakdown_group_layout.addWidget(self.breakdown_preferred_cutoff_voltage_label, 9, 1)
-
-        # Add the breakdown group box to its display frame
-        self.breakdown_display_layout.addWidget(self.breakdown_group_box)
-
-        # NEW: Last Logged Ride Group Box (in Breakdown Column)
-        self.last_ride_group_box = QGroupBox("--- Last Logged Ride ---")
-        self.last_ride_layout = QGridLayout(self.last_ride_group_box)
-
-        self.last_ride_layout.addWidget(QLabel("Date:"), 0, 0)
-        self.last_ride_layout.addWidget(self.breakdown_last_ride_date_label, 0, 1)
-
-        self.last_ride_layout.addWidget(QLabel("Distance:"), 1, 0)
-        self.last_ride_layout.addWidget(self.breakdown_last_ride_distance_label, 1, 1)
-
-        self.last_ride_layout.addWidget(QLabel("Wh Consumed:"), 2, 0)
-        self.last_ride_layout.addWidget(self.breakdown_last_ride_wh_label, 2, 1)
-
-        self.last_ride_layout.addWidget(QLabel("Wh/mile:"), 3, 0)
-        self.last_ride_layout.addWidget(self.breakdown_last_ride_wh_per_mile_label, 3, 1)
-
-        # Move the apply efficiency button into this group box for better organization
-        self.apply_logged_efficiency_button = QPushButton("Apply Logged Efficiency to Calculator")
-        self.apply_logged_efficiency_button.clicked.connect(self.apply_logged_efficiency_to_calculator)
-        self.apply_logged_efficiency_button.setStyleSheet(
+        # Buttons to apply efficiency
+        efficiency_buttons_layout = QHBoxLayout()
+        self.btn_apply_last_ride_efficiency = QPushButton("Apply Last Ride Efficiency")
+        self.btn_apply_last_ride_efficiency.clicked.connect(self.apply_last_ride_efficiency_to_calculator)
+        self.btn_apply_last_ride_efficiency.setStyleSheet(
             "QPushButton {"
             "   background-color: #007bff; /* Bootstrap primary blue */"
             "   color: white;"
             "   padding: 8px 15px;"
             "   border-radius: 6px;"
-            "   font-size: 14px;"
+            "   font-size: 12px;"
             "   font-weight: bold;"
             "   border: none;"
             "}"
@@ -538,9 +646,66 @@ class BatteryCalculatorGUI(QWidget):
             "   background-color: #0062cc;"
             "}"
         )
-        self.last_ride_layout.addWidget(self.apply_logged_efficiency_button, 4, 0, 1, 2) # Span two columns
+        efficiency_buttons_layout.addWidget(self.btn_apply_last_ride_efficiency)
 
-        self.breakdown_display_layout.addWidget(self.last_ride_group_box)
+        self.btn_apply_average_efficiency = QPushButton("Apply Average Efficiency")
+        self.btn_apply_average_efficiency.clicked.connect(self.apply_average_efficiency_to_calculator)
+        self.btn_apply_average_efficiency.setStyleSheet(
+            "QPushButton {"
+            "   background-color: #28a745; /* Green */"
+            "   color: white;"
+            "   padding: 8px 15px;"
+            "   border-radius: 6px;"
+            "   font-size: 12px;"
+            "   font-weight: bold;"
+            "   border: none;"
+            "}"
+            "QPushButton:hover {"
+            "   background-color: #218838;"
+            "}"
+            "QPushButton:pressed {"
+            "   background-color: #1e7e34;"
+            "}"
+        )
+        efficiency_buttons_layout.addWidget(self.btn_apply_average_efficiency)
+
+        self.logged_rides_info_layout.addLayout(efficiency_buttons_layout)
+        self.breakdown_display_layout.addWidget(self.logged_rides_info_group_box) # Added to breakdown column
+
+        # --- NEW: Vehicle Breakdown Group Box (added to breakdown column) ---
+        self.vehicle_breakdown_group_box = QGroupBox("--- Vehicle Breakdown ---")
+        self.vehicle_breakdown_layout = QGridLayout(self.vehicle_breakdown_group_box)
+        self.breakdown_display_layout.addWidget(self.vehicle_breakdown_group_box) # Add to breakdown column
+
+        # Add labels to the new vehicle_breakdown_layout
+        self.vehicle_breakdown_layout.addWidget(QLabel("Nominal Voltage:"), 0, 0)
+        self.vehicle_breakdown_layout.addWidget(self.breakdown_voltage_label, 0, 1)
+        self.vehicle_breakdown_layout.addWidget(QLabel("Cells in Series:"), 1, 0)
+        self.vehicle_breakdown_layout.addWidget(self.breakdown_series_cells_label, 1, 1)
+        self.vehicle_breakdown_layout.addWidget(QLabel("Min/Max Voltage:"), 2, 0)
+        self.vehicle_breakdown_layout.addWidget(self.breakdown_min_max_voltage_label, 2, 1)
+        self.vehicle_breakdown_layout.addWidget(QLabel("Ah:"), 3, 0)
+        self.vehicle_breakdown_layout.addWidget(self.breakdown_ah_label, 3, 1)
+        self.vehicle_breakdown_layout.addWidget(QLabel("Wh:"), 4, 0)
+        self.vehicle_breakdown_layout.addWidget(self.breakdown_wh_label, 4, 1)
+        self.vehicle_breakdown_layout.addWidget(QLabel("Motor Watts:"), 5, 0)
+        self.vehicle_breakdown_layout.addWidget(self.breakdown_motor_watts_label, 5, 1)
+        self.vehicle_breakdown_layout.addWidget(QLabel("Wheel Diameter:"), 6, 0)
+        self.vehicle_breakdown_layout.addWidget(self.breakdown_wheel_diameter_label, 6, 1)
+        self.vehicle_breakdown_layout.addWidget(QLabel("Charge Rate:"), 7, 0)
+        self.vehicle_breakdown_layout.addWidget(self.breakdown_charge_rate_label, 7, 1)
+        self.vehicle_breakdown_layout.addWidget(QLabel("Preferred Cutoff %:"), 8, 0)
+        self.vehicle_breakdown_layout.addWidget(self.breakdown_preferred_cutoff_label, 8, 1)
+        self.vehicle_breakdown_layout.addWidget(QLabel("Preferred Cutoff V:"), 9, 0)
+        self.vehicle_breakdown_layout.addWidget(self.breakdown_preferred_cutoff_voltage_label, 9, 1)
+        self.vehicle_breakdown_layout.addWidget(QLabel("Charge Throttle %:"), 10, 0)
+        self.vehicle_breakdown_layout.addWidget(self.breakdown_charge_throttle_label, 10, 1)
+        self.vehicle_breakdown_layout.addWidget(QLabel("Throttled Rate:"), 11, 0)
+        self.vehicle_breakdown_layout.addWidget(self.breakdown_throttled_rate_label, 11, 1)
+        self.vehicle_breakdown_layout.addWidget(QLabel("BMS Conditioning:"), 12, 0)
+        self.vehicle_breakdown_layout.addWidget(self.breakdown_bms_conditioning_label, 12, 1)
+        self.vehicle_breakdown_layout.addWidget(QLabel("Efficiency Source:"), 13, 0)
+        self.vehicle_breakdown_layout.addWidget(self.efficiency_source_label, 13, 1)
 
 
         # --- Attribution (at the bottom of the Results Column) ---
@@ -551,7 +716,7 @@ class BatteryCalculatorGUI(QWidget):
 
     def format_time_to_hours_minutes(self, decimal_hours):
         """Converts a float representing hours into a formatted 'X hours Y min' string."""
-        if decimal_hours is None or decimal_hours < 0:
+        if decimal_hours is None or decimal_hours < 0 or decimal_hours == float('inf'):
             return "N/A"
         
         total_minutes = round(decimal_hours * 60)
@@ -755,189 +920,20 @@ class BatteryCalculatorGUI(QWidget):
         ride_log_export_import_layout.addWidget(self.import_supercycle_button) # Add the new button
 
 
-        # Average efficiency display (This group box remains in Ride Log tab)
+        # Average efficiency display (This group box remains in Ride Log tab - display only)
         average_efficiency_group_box = QGroupBox("Average Efficiency from Logged Rides")
         average_efficiency_layout = QVBoxLayout(average_efficiency_group_box)
         self.average_wh_per_mile_label = QLabel("Average Wh/mile: N/A")
         self.average_miles_per_wh_label = QLabel("Average Miles/Wh: N/A")
         average_efficiency_layout.addWidget(self.average_wh_per_mile_label)
         average_efficiency_layout.addWidget(self.average_miles_per_wh_label)
-        # The apply_logged_efficiency_button is now in the Breakdown Column, removed from here
-        # average_efficiency_layout.addWidget(self.apply_logged_efficiency_button)
-
-
+        
         self.ride_log_main_layout.addWidget(input_group_box)
         self.ride_log_main_layout.addWidget(self.ride_log_table)
         self.ride_log_main_layout.addWidget(delete_ride_button)
         self.ride_log_main_layout.addLayout(ride_log_export_import_layout) # Add the new layout for export/import
         self.ride_log_main_layout.addWidget(average_efficiency_group_box) # Still keep this group box for displaying averages
 
-
-    def init_quick_tools_ui(self):
-        """Initializes the UI elements for the Quick Tools tab."""
-        # Column 1: Converters
-        converters_column_layout = QVBoxLayout()
-        self.quick_tools_main_h_layout.addLayout(converters_column_layout)
-
-        # Percentage to Voltage Converter
-        percent_to_volt_group_box = QGroupBox("Percentage to Voltage Converter")
-        percent_to_volt_layout = QGridLayout(percent_to_volt_group_box)
-
-        percent_to_volt_layout.addWidget(QLabel("Percentage (%):"), 0, 0)
-        self.percent_input_quick = QLineEdit()
-        self.percent_input_quick.setPlaceholderText("e.g., 50")
-        percent_to_volt_layout.addWidget(self.percent_input_quick, 0, 1)
-
-        convert_percent_button = QPushButton("Convert to Voltage")
-        convert_percent_button.clicked.connect(self.convert_percent_to_voltage)
-        convert_percent_button.setStyleSheet(
-            "QPushButton {"
-            "   background-color: #2196F3; /* Blue */"
-            "   color: white;"
-            "   padding: 8px 15px;"
-            "   border-radius: 6px;"
-            "   font-size: 14px;"
-            "   font-weight: bold;"
-            "   border: none;"
-            "}"
-            "QPushButton:hover {"
-            "   background-color: #1976D2;"
-            "}"
-        )
-        percent_to_volt_layout.addWidget(convert_percent_button, 1, 0, 1, 2) # Span two columns
-
-        percent_to_volt_layout.addWidget(QLabel("Estimated Voltage (V):"), 2, 0)
-        self.voltage_output_quick = QLabel("N/A")
-        self.voltage_output_quick.setStyleSheet("font-weight: bold;")
-        percent_to_volt_layout.addWidget(self.voltage_output_quick, 2, 1)
-
-        converters_column_layout.addWidget(percent_to_volt_group_box)
-
-        # Voltage to Percentage Converter
-        volt_to_percent_group_box = QGroupBox("Voltage to Percentage Converter")
-        volt_to_percent_layout = QGridLayout(volt_to_percent_group_box)
-
-        volt_to_percent_layout.addWidget(QLabel("Voltage (V):"), 0, 0)
-        self.voltage_input_quick = QLineEdit()
-        self.voltage_input_quick.setPlaceholderText("e.g., 48.1")
-        volt_to_percent_layout.addWidget(self.voltage_input_quick, 0, 1)
-
-        convert_volt_button = QPushButton("Convert to Percentage")
-        convert_volt_button.clicked.connect(self.convert_voltage_to_percent)
-        convert_volt_button.setStyleSheet(
-            "QPushButton {"
-            "   background-color: #00BCD4; /* Cyan */"
-            "   color: white;"
-            "   padding: 8px 15px;"
-            "   border-radius: 6px;"
-            "   font-size: 14px;"
-            "   font-weight: bold;"
-            "   border: none;"
-            "}"
-            "QPushButton:hover {"
-            "   background-color: #0097A7;"
-            "}"
-        )
-        volt_to_percent_layout.addWidget(convert_volt_button, 1, 0, 1, 2) # Span two columns
-
-        volt_to_percent_layout.addWidget(QLabel("Estimated Percentage (%):"), 2, 0)
-        self.percentage_output_quick = QLabel("N/A")
-        self.percentage_output_quick.setStyleSheet("font-weight: bold;")
-        volt_to_percent_layout.addWidget(self.percentage_output_quick, 2, 1)
-
-        converters_column_layout.addWidget(volt_to_percent_group_box)
-        converters_column_layout.addStretch(1) # Push content to the top
-
-
-        # Column 2: Countdown Timer
-        timer_column_layout = QVBoxLayout()
-        self.quick_tools_main_h_layout.addLayout(timer_column_layout)
-
-        timer_group_box = QGroupBox("Countdown / Count-up Timer")
-        timer_layout = QGridLayout(timer_group_box)
-
-        timer_layout.addWidget(QLabel("Hours:"), 0, 0)
-        self.countdown_hours_entry = QLineEdit("0")
-        self.countdown_hours_entry.setValidator(QIntValidator(0, 999)) # Allow up to 999 hours
-        timer_layout.addWidget(self.countdown_hours_entry, 0, 1)
-
-        timer_layout.addWidget(QLabel("Minutes:"), 1, 0)
-        self.countdown_minutes_entry = QLineEdit("0")
-        self.countdown_minutes_entry.setValidator(QIntValidator(0, 59))
-        timer_layout.addWidget(self.countdown_minutes_entry, 1, 1)
-
-        timer_layout.addWidget(QLabel("Seconds:"), 2, 0)
-        self.countdown_seconds_entry = QLineEdit("0")
-        self.countdown_seconds_entry.setValidator(QIntValidator(0, 59))
-        timer_layout.addWidget(self.countdown_seconds_entry, 2, 1)
-
-        self.start_stop_timer_button = QPushButton("Start Countdown")
-        self.start_stop_timer_button.clicked.connect(self.start_stop_timer)
-        self.start_stop_timer_button.setStyleSheet(
-            "QPushButton {"
-            "   background-color: #FFC107; /* Amber */"
-            "   color: black;"
-            "   padding: 8px 15px;"
-            "   border-radius: 6px;"
-            "   font-size: 14px;"
-            "   font-weight: bold;"
-            "   border: none;"
-            "}"
-            "QPushButton:hover {"
-            "   background-color: #FFA000;"
-            "}"
-        )
-        timer_layout.addWidget(self.start_stop_timer_button, 3, 0, 1, 2)
-
-        self.reset_timer_button = QPushButton("Reset Timer")
-        self.reset_timer_button.clicked.connect(self.reset_timer)
-        self.reset_timer_button.setStyleSheet(
-            "QPushButton {"
-            "   background-color: #607D8B; /* Blue Grey */"
-            "   color: white;"
-            "   padding: 8px 15px;"
-            "   border-radius: 6px;"
-            "   font-size: 14px;"
-            "   font-weight: bold;"
-            "   border: none;"
-            "}"
-            "QPushButton:hover {"
-            "   background-color: #455A64;"
-            "}"
-        )
-        timer_layout.addWidget(self.reset_timer_button, 4, 0, 1, 2)
-
-        # Timer display
-        self.timer_direction_label = QLabel(" ") # Will show arrow
-        self.timer_direction_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.timer_direction_label.setStyleSheet("font-size: 24pt; font-weight: bold;")
-        timer_layout.addWidget(self.timer_direction_label, 5, 0, 1, 2)
-
-        self.timer_display_label = QLabel("00:00:00")
-        self.timer_display_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.timer_display_label.setStyleSheet("font-size: 36pt; font-weight: bold; color: #333;")
-        timer_layout.addWidget(self.timer_display_label, 6, 0, 1, 2)
-
-        timer_column_layout.addWidget(timer_group_box)
-        timer_column_layout.addStretch(1)
-
-
-        # Column 3: Battery Voltage Reference Chart
-        chart_column_layout = QVBoxLayout()
-        self.quick_tools_main_h_layout.addLayout(chart_column_layout)
-
-        battery_chart_group_box = QGroupBox("Battery Voltage Reference")
-        battery_chart_layout = QVBoxLayout(battery_chart_group_box)
-
-        self.battery_chart_display = QTextEdit()
-        self.battery_chart_display.setReadOnly(True)
-        self.battery_chart_display.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap) # Prevent wrapping for table format
-        self.battery_chart_display.setFontPointSize(10) # Adjust font size for readability
-        battery_chart_layout.addWidget(self.battery_chart_display)
-        self.generate_battery_chart_text() # Populate the chart
-
-        chart_column_layout.addWidget(battery_chart_group_box)
-        chart_column_layout.addStretch(1)
 
     def init_about_ui(self):
         """Initializes the UI elements for the About tab."""
@@ -983,7 +979,7 @@ class BatteryCalculatorGUI(QWidget):
 
         # New section for SuperCycle
         supercycle_group_box = QGroupBox("Thanks to SuperCycle Creator")
-        supercycle_layout = QVBoxLayout(supercycle_group_box)
+        supercycle_layout = QVBoxLayout(supercycle_group_box) # FIX: Changed supercycle_box to supercycle_group_box
 
         osborntech_label = QTextBrowser()
         osborntech_label.setOpenExternalLinks(True)
@@ -1042,67 +1038,28 @@ class BatteryCalculatorGUI(QWidget):
 
 
     def convert_percent_to_voltage(self):
-        """Converts a given percentage to voltage using the current profile's battery info."""
-        self.voltage_output_quick.setText("N/A") # Clear previous result
-
-        try:
-            percent = float(self.percent_input_quick.text())
-            if not (0 <= percent <= 100):
-                QMessageBox.warning(self, "Input Error", "Percentage must be between 0 and 100.")
-                return
-
-            min_v, max_v, series_cells = self.get_derived_voltage_range_and_s()
-            if min_v is None or max_v is None or (max_v - min_v) <= 0:
-                QMessageBox.warning(self, "Battery Info Missing", "Please ensure 'Nominal Voltage' and 'Cells in Series' are correctly set in the 'Battery Calculator' tab.")
-                return
-
-            estimated_voltage = min_v + (percent / 100) * (max_v - min_v)
-            self.voltage_output_quick.setText(f"{estimated_voltage:.2f} V")
-
-        except ValueError:
-            QMessageBox.critical(self, "Input Error", "Please enter a valid number for Percentage.")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"An unexpected error occurred: {e}")
+        """This converter is no longer directly accessible in the UI."""
+        QMessageBox.warning(self, "Feature Removed", "This converter is no longer directly accessible in the UI.")
+        return
 
     def convert_voltage_to_percent(self):
-        """Converts a given voltage to percentage using the current profile's battery info."""
-        self.percentage_output_quick.setText("N/A") # Clear previous result
-
-        try:
-            voltage = float(self.voltage_input_quick.text())
-
-            min_v, max_v, series_cells = self.get_derived_voltage_range_and_s()
-            if min_v is None or max_v is None or (max_v - min_v) <= 0:
-                QMessageBox.warning(self, "Battery Info Missing", "Please ensure 'Nominal Voltage' and 'Cells in Series' are correctly set in the 'Battery Calculator' tab.")
-                return
-            
-            # Allow voltages slightly outside the min/max for practical use, but warn if far off
-            if not (min_v - 10 <= voltage <= max_v + 10): # +/- 10V tolerance for warning
-                QMessageBox.warning(self, "Voltage Warning", f"Entered voltage ({voltage}V) is significantly outside the typical range for your battery ({min_v:.1f}V - {max_v:.1f}V). Result might be inaccurate.")
-
-            percentage = ((voltage - min_v) / (max_v - min_v)) * 100
-            percentage = max(0.0, min(100.0, percentage)) # Clamp between 0 and 100
-
-            self.percentage_output_quick.setText(f"{percentage:.2f} %")
-
-        except ValueError:
-            QMessageBox.critical(self, "Input Error", "Please enter a valid number for Voltage.")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"An unexpected error occurred: {e}")
+        """This converter is no longer directly accessible in the UI."""
+        QMessageBox.warning(self, "Feature Removed", "This converter is no longer directly accessible in the UI.")
+        return
 
     def start_stop_timer(self):
         """Starts or stops the countdown/count-up timer."""
         if self.timer_running:
             self.timer.stop()
             self.timer_running = False
-            self.start_stop_timer_button.setText("Resume Timer")
+            self.start_stop_timer_button.setText("Resume") # Shorter text
             self.start_stop_timer_button.setStyleSheet(
                 "QPushButton {"
                 "   background-color: #FFC107; /* Amber */"
                 "   color: black;"
-                "   padding: 8px 15px;"
+                "   padding: 5px 10px;" # Smaller padding
                 "   border-radius: 6px;"
-                "   font-size: 14px;"
+                "   font-size: 12px;" # Smaller font
                 "   font-weight: bold;"
                 "   border: none;"
                 "}"
@@ -1110,6 +1067,12 @@ class BatteryCalculatorGUI(QWidget):
                 "   background-color: #FFA000;"
                 "}"
             )
+            # Hide battery state labels when stopping
+            self.timer_estimated_percentage_label.hide()
+            self.timer_estimated_voltage_label.hide()
+            self.timer_estimated_percentage_label.setText("Est. %: N/A")
+            self.timer_estimated_voltage_label.setText("Est. V: N/A")
+
         else:
             try:
                 hours = int(self.countdown_hours_entry.text())
@@ -1121,12 +1084,12 @@ class BatteryCalculatorGUI(QWidget):
                     self.initial_countdown_seconds = self.time_remaining_seconds # Store for reset
                     self.counting_up = False # Ensure it starts counting down
                     self.timer_direction_label.setText("↓")
-                    self.timer_display_label.setStyleSheet("font-size: 36pt; font-weight: bold; color: #333;") # Reset color
+                    self.timer_display_label.setStyleSheet("font-size: 24pt; font-weight: bold; color: #333;") # Reset color
 
                 if self.time_remaining_seconds <= 0 and not self.counting_up: # If input was 0, start counting up immediately
                     self.counting_up = True
                     self.timer_direction_label.setText("↑")
-                    self.timer_display_label.setStyleSheet("font-size: 36pt; font-weight: bold; color: #007bff;") # Blue for count up
+                    self.timer_display_label.setStyleSheet("font-size: 24pt; font-weight: bold; color: #007bff;") # Blue for count up
 
                 if self.time_remaining_seconds == 0 and self.counting_up: # If it was already counting up from 0
                     pass # Continue counting up
@@ -1135,19 +1098,19 @@ class BatteryCalculatorGUI(QWidget):
                     self.time_remaining_seconds = 0
                     self.counting_up = True
                     self.timer_direction_label.setText("↑")
-                    self.timer_display_label.setStyleSheet("font-size: 36pt; font-weight: bold; color: #007bff;") # Blue for count up
+                    self.timer_display_label.setStyleSheet("font-size: 24pt; font-weight: bold; color: #007bff;") # Blue for count up
 
 
                 self.timer.start(1000) # Update every second
                 self.timer_running = True
-                self.start_stop_timer_button.setText("Stop Timer")
+                self.start_stop_timer_button.setText("Stop") # Shorter text
                 self.start_stop_timer_button.setStyleSheet(
                     "QPushButton {"
                     "   background-color: #FF5722; /* Deep Orange */"
                     "   color: white;"
-                    "   padding: 8px 15px;"
+                    "   padding: 5px 10px;" # Smaller padding
                     "   border-radius: 6px;"
-                    "   font-size: 14px;"
+                    "   font-size: 12px;" # Smaller font
                     "   font-weight: bold;"
                     "   border: none;"
                     "}"
@@ -1156,6 +1119,46 @@ class BatteryCalculatorGUI(QWidget):
                     "}"
                 )
                 self.update_timer_display() # Initial display update
+
+                # NEW: Capture battery state for estimation if checkbox is checked
+                if self.show_battery_state_checkbox.isChecked():
+                    self.timer_initial_charge_percentage, _ = self.get_current_battery_percentage()
+                    
+                    # Get total charge time from the calculator tab
+                    total_charge_time_str = self.charge_time_label.text()
+                    if total_charge_time_str and total_charge_time_str != "N/A" and total_charge_time_str != "Error":
+                        try:
+                            # Convert "X hours Y min" back to decimal hours
+                            parts = total_charge_time_str.split()
+                            total_hours = 0.0
+                            if "hour" in total_charge_time_str:
+                                total_hours += float(parts[0])
+                                if "min" in total_charge_time_str:
+                                    total_hours += float(parts[2]) / 60.0
+                            elif "min" in total_charge_time_str:
+                                total_hours += float(parts[0]) / 60.0
+
+                            self.timer_total_charge_time_hours = total_hours
+                        except ValueError:
+                            self.timer_total_charge_time_hours = None # Invalid format
+                    else:
+                        self.timer_total_charge_time_hours = None
+
+                    self.timer_battery_min_v, self.timer_battery_max_v, _ = self.get_derived_voltage_range_and_s()
+                    self.timer_start_datetime = datetime.now()
+
+                    if self.timer_initial_charge_percentage is None or self.timer_total_charge_time_hours is None or self.timer_total_charge_time_hours <= 0 or self.timer_battery_min_v is None or self.timer_battery_max_v is None:
+                        QMessageBox.warning(self, "Battery State Estimation Warning",
+                                            "Cannot estimate battery state: Please ensure valid 'Current Battery State' and 'Charging' information is entered and calculated on the 'Battery Calculator' tab (click 'Calculate' first).")
+                        self.timer_estimated_percentage_label.setText("Est. %: N/A (Info Missing)")
+                        self.timer_estimated_voltage_label.setText("Est. V: N/A (Info Missing)")
+                        self.timer_estimated_percentage_label.show() # Show error state
+                        self.timer_estimated_voltage_label.show() # Show error state
+                    else:
+                        # Initial update of battery state display
+                        self.update_timer_battery_state()
+                        self.timer_estimated_percentage_label.show()
+                        self.timer_estimated_voltage_label.show()
 
             except ValueError:
                 QMessageBox.critical(self, "Input Error", "Please enter valid numbers for hours, minutes, and seconds.")
@@ -1170,28 +1173,122 @@ class BatteryCalculatorGUI(QWidget):
                 self.time_remaining_seconds = 0
                 self.counting_up = True
                 self.timer_direction_label.setText("↑")
-                self.timer_display_label.setStyleSheet("font-size: 36pt; font-weight: bold; color: #007bff;") # Blue for count up
+                self.timer_display_label.setStyleSheet("font-size: 24pt; font-weight: bold; color: #007bff;") # Blue for count up
                 # Optionally play a sound or show a notification when countdown ends
         else:
             self.time_remaining_seconds += 1
             self.timer_direction_label.setText("↑") # Ensure it stays up if it was already up
-            self.timer_display_label.setStyleSheet("font-size: 36pt; font-weight: bold; color: #007bff;") # Blue for count up
+            self.timer_display_label.setStyleSheet("font-size: 24pt; font-weight: bold; color: #007bff;") # Blue for count up
 
         self.update_timer_display()
+        
+        # NEW: Update estimated battery state if enabled and valid
+        if self.show_battery_state_checkbox.isChecked() and self.timer_running:
+            self.update_timer_battery_state()
+
+    def update_timer_battery_state(self):
+        """Calculates and updates the estimated battery percentage and voltage during timer run."""
+        if (self.timer_initial_charge_percentage is not None and
+            self.timer_total_charge_time_hours is not None and
+            self.timer_total_charge_time_hours > 0 and
+            self.timer_battery_min_v is not None and
+            self.timer_battery_max_v is not None and
+            self.timer_start_datetime is not None):
+
+            elapsed_seconds = (datetime.now() - self.timer_start_datetime).total_seconds()
+            elapsed_hours = elapsed_seconds / 3600.0
+
+            # Calculate the percentage of the *remaining charge* that has been completed
+            # Assuming the timer is counting down from the initial charge time to 0,
+            # this represents progress towards 100%.
+            
+            # First, calculate the total percentage points to gain (100 - initial_percentage)
+            percentage_to_gain = 100 - self.timer_initial_charge_percentage
+            
+            # Calculate how much of that percentage has been gained based on elapsed time
+            # Ensure we don't divide by zero if total_charge_time_hours is somehow zero
+            if self.timer_total_charge_time_hours > 0:
+                percentage_gained = (elapsed_hours / self.timer_total_charge_time_hours) * percentage_to_gain
+            else:
+                percentage_gained = 0 # Cannot calculate if total charge time is zero
+
+            # Current estimated percentage
+            estimated_percent = self.timer_initial_charge_percentage + percentage_gained
+            estimated_percent = min(100.0, max(0.0, estimated_percent)) # Clamp between 0 and 100
+
+            # Convert estimated percentage to voltage
+            voltage_range_diff = self.timer_battery_max_v - self.timer_battery_min_v
+            estimated_voltage = self.timer_battery_min_v + (estimated_percent / 100) * voltage_range_diff
+
+            self.timer_estimated_percentage_label.setText(f"Est. %: {estimated_percent:.2f}%")
+            self.timer_estimated_voltage_label.setText(f"Est. V: {estimated_voltage:.2f}V")
+        else:
+            self.timer_estimated_percentage_label.setText("Est. %: N/A")
+            self.timer_estimated_voltage_label.setText("Est. V: N/A")
+
+    def toggle_timer_battery_display(self, checked):
+        """Toggles the visibility of the estimated battery state labels."""
+        if checked:
+            # If timer is already running, update immediately
+            if self.timer_running:
+                # Re-capture values when checkbox is checked while timer is running
+                self.timer_initial_charge_percentage, _ = self.get_current_battery_percentage()
+                total_charge_time_str = self.charge_time_label.text()
+                if total_charge_time_str and total_charge_time_str != "N/A" and total_charge_time_str != "Error":
+                    try:
+                        parts = total_charge_time_str.split()
+                        total_hours = 0.0
+                        if "hour" in total_charge_time_str:
+                            total_hours += float(parts[0])
+                            if "min" in total_charge_time_str:
+                                total_hours += float(parts[2]) / 60.0
+                        elif "min" in total_charge_time_str:
+                            total_hours += float(parts[0]) / 60.0
+                        self.timer_total_charge_time_hours = total_hours
+                    except ValueError:
+                        self.timer_total_charge_time_hours = None
+                else:
+                    self.timer_total_charge_time_hours = None
+
+                self.timer_battery_min_v, self.timer_battery_max_v, _ = self.get_derived_voltage_range_and_s()
+                self.timer_start_datetime = datetime.now() # Reset start time for accurate elapsed calculation
+
+                if (self.timer_initial_charge_percentage is None or self.timer_total_charge_time_hours is None or
+                    self.timer_total_charge_time_hours <= 0 or self.timer_battery_min_v is None or
+                    self.timer_battery_max_v is None):
+                    QMessageBox.warning(self, "Battery State Estimation Warning",
+                                        "Cannot estimate battery state: Please ensure valid 'Current Battery State' and 'Charging' information is entered and calculated on the 'Battery Calculator' tab (click 'Calculate' first).")
+                    self.timer_estimated_percentage_label.setText("Est. %: N/A (Info Missing)")
+                    self.timer_estimated_voltage_label.setText("Est. V: N/A (Info Missing)")
+                    self.show_battery_state_checkbox.setChecked(False) # Uncheck if info is missing
+                else:
+                    self.timer_estimated_percentage_label.show()
+                    self.timer_estimated_voltage_label.show()
+                    self.update_timer_battery_state() # Initial update
+            else: # Timer is not running, just show N/A placeholders
+                self.timer_estimated_percentage_label.setText("Est. %: N/A")
+                self.timer_estimated_voltage_label.setText("Est. V: N/A")
+                self.timer_estimated_percentage_label.show()
+                self.timer_estimated_voltage_label.show()
+        else:
+            self.timer_estimated_percentage_label.hide()
+            self.timer_estimated_voltage_label.hide()
+            self.timer_estimated_percentage_label.setText("Est. %: N/A")
+            self.timer_estimated_voltage_label.setText("Est. V: N/A") # Clear text when hidden
 
     def reset_timer(self):
         """Resets the timer to its initial countdown value or to 00:00:00 if no initial value was set."""
         self.timer.stop()
         self.timer_running = False
         self.counting_up = False
-        self.start_stop_timer_button.setText("Start Countdown")
+        self.start_stop_timer_button.setText("Start/Stop") # Shorter text
         self.start_stop_timer_button.setStyleSheet(
             "QPushButton {"
             "   background-color: #FFC107; /* Amber */"
             "   color: black;"
-            "   padding: 8px 15px;"
+            "   padding: 5px 10px;" # Smaller padding
             "   border-radius: 6px;"
-            "   font-size: 14px;"
+            "   font-size: 12px;" # Smaller font
             "   font-weight: bold;"
             "   border: none;"
             "}"
@@ -1200,7 +1297,7 @@ class BatteryCalculatorGUI(QWidget):
             "}"
         )
         self.timer_direction_label.setText(" ")
-        self.timer_display_label.setStyleSheet("font-size: 36pt; font-weight: bold; color: #333;")
+        self.timer_display_label.setStyleSheet("font-size: 24pt; font-weight: bold; color: #333;")
 
         # Reset input fields to initial values or 0
         if self.initial_countdown_seconds > 0:
@@ -1219,32 +1316,21 @@ class BatteryCalculatorGUI(QWidget):
         
         self.update_timer_display() # Update display to show reset value
 
+        # NEW: Clear and hide battery state labels on reset
+        self.timer_estimated_percentage_label.setText("Est. %: N/A")
+        self.timer_estimated_voltage_label.setText("Est. V: N/A")
+        self.timer_estimated_percentage_label.hide()
+        self.timer_estimated_voltage_label.hide()
+        self.timer_initial_charge_percentage = None
+        self.timer_total_charge_time_hours = None
+        self.timer_battery_min_v = None
+        self.timer_battery_max_v = None
+        self.timer_start_datetime = None
+
+
     def generate_battery_chart_text(self):
-        """Generates the quick reference battery voltage chart text."""
-        chart_text = "Common Li-ion Battery Voltages (Approx.)\n\n"
-        chart_text += f"{'S-Cells':<10}{'Nominal V':<12}{'0% V':<10}{'25% V':<10}{'50% V':<10}{'75% V':<10}{'100% V':<10}\n"
-        chart_text += "-" * 75 + "\n"
-
-        common_s_values = [10, 13, 14, 16, 20] # Common series cell counts
-
-        for s_cells in common_s_values:
-            nominal_v = s_cells * self.CELL_VOLTAGE_NOMINAL
-            empty_v = s_cells * self.CELL_VOLTAGE_EMPTY
-            full_v = s_cells * self.CELL_VOLTAGE_FULL
-
-            # Calculate intermediate voltages
-            v_range = full_v - empty_v
-            v_25 = empty_v + (v_range * 0.25)
-            v_50 = empty_v + (v_range * 0.50)
-            v_75 = empty_v + (v_range * 0.75)
-
-            chart_text += (
-                f"{s_cells:<10}{nominal_v:<12.1f}"
-                f"{empty_v:<10.1f}{v_25:<10.1f}{v_50:<10.1f}{v_75:<10.1f}{full_v:<10.1f}\n"
-            )
-        
-        chart_text += "\nNote: These are approximate values. Actual voltages may vary."
-        self.battery_chart_display.setText(chart_text)
+        """This method is no longer directly used in the UI."""
+        pass
 
 
     def closeEvent(self, event):
@@ -1291,9 +1377,12 @@ class BatteryCalculatorGUI(QWidget):
             "motor_wattage": "",
             "wheel_diameter": "",
             "driving_style": "Casual",
-            "preferred_cutoff_percentage": "25", # NEW: Default cutoff
-            "ride_log": [], # New entry for ride log data
-            "last_ride_data": {} # NEW: Default for last ride data
+            "preferred_cutoff_percentage": "25",
+            "charge_throttle_percent": "None", # NEW: Default for charge throttle
+            "throttled_rate": "",              # NEW: Default for throttled rate
+            "bms_conditioning_time": "None",   # NEW: Default for BMS conditioning
+            "ride_log": [],
+            "last_ride_data": {}
         }
 
     def update_profile_combo(self):
@@ -1323,7 +1412,7 @@ class BatteryCalculatorGUI(QWidget):
         self.charging_duration_combo.setCurrentText(settings.get("charging_duration_hours", ""))
         self.current_percentage_entry.setText(settings.get("current_percentage", "0"))
         self.current_voltage_entry.setText(settings.get("current_voltage", ""))
-        self.preferred_cutoff_entry.setText(settings.get("preferred_cutoff_percentage", "25")) # NEW: Load cutoff
+        self.preferred_cutoff_entry.setText(settings.get("preferred_cutoff_percentage", "25"))
         
         # Set radio button based on loaded method
         charge_method = settings.get("charge_input_method", "percentage")
@@ -1336,6 +1425,11 @@ class BatteryCalculatorGUI(QWidget):
         self.wheel_diameter_entry.setText(settings.get("wheel_diameter", ""))
         self.driving_style_combo.setCurrentText(settings.get("driving_style", "Casual"))
 
+        # NEW: Load charge throttle and BMS conditioning settings
+        self.charge_throttle_combo.setCurrentText(settings.get("charge_throttle_percent", "None"))
+        self.throttled_rate_entry.setText(settings.get("throttled_rate", ""))
+        self.bms_conditioning_combo.setCurrentText(settings.get("bms_conditioning_time", "None"))
+
         # Trigger updates after loading
         self.update_capacity_label()
         self.toggle_charge_input()
@@ -1346,11 +1440,14 @@ class BatteryCalculatorGUI(QWidget):
 
         # Update the ride log table for the Ride Log tab
         self.update_ride_log_table()
-        self.calculate_average_efficiency()
+        self.calculate_average_efficiency() # This will also update the new labels on the main tab
 
         # NEW: Load and display last ride data
         self.last_ride_data = settings.get("last_ride_data", {})
-        self.update_last_ride_display()
+        self.update_last_ride_display() # This will also update the new labels on the main tab
+
+        # Apply default efficiency (average) after everything is loaded
+        self.apply_default_logged_efficiency()
 
 
     def on_profile_selection(self, profile_name):
@@ -1376,9 +1473,12 @@ class BatteryCalculatorGUI(QWidget):
             "motor_wattage": self.motor_wattage_entry.text(),
             "wheel_diameter": self.wheel_diameter_entry.text(),
             "driving_style": self.driving_style_combo.currentText(),
-            "preferred_cutoff_percentage": self.preferred_cutoff_entry.text(), # NEW: Save cutoff
+            "preferred_cutoff_percentage": self.preferred_cutoff_entry.text(),
+            "charge_throttle_percent": self.charge_throttle_combo.currentText(), # NEW: Save charge throttle
+            "throttled_rate": self.throttled_rate_entry.text(),              # NEW: Save throttled rate
+            "bms_conditioning_time": self.bms_conditioning_combo.currentText(),   # NEW: Save BMS conditioning
             "ride_log": self.all_profiles.get(profile_name, {}).get("ride_log", []), # Preserve existing log
-            "last_ride_data": self.last_ride_data # NEW: Save last ride data
+            "last_ride_data": self.last_ride_data, # NEW: Save last ride data
         }
         self.all_profiles[profile_name] = current_settings
         self._save_all_profiles_to_file(profile_name)
@@ -1476,8 +1576,6 @@ class BatteryCalculatorGUI(QWidget):
                 self.battery_info_layout.addWidget(self.series_cells_entry, 1, 1) # Place at row 1, col 1
                 self.series_cells_label.show()
                 self.series_cells_entry.show()
-                self.min_voltage_info_label.setText("Empty V: N/A")
-                self.max_voltage_info_label.setText("Full Charge V: N/A")
                 return None, None, None # Explicitly return None for unpacking
 
         except ValueError:
@@ -1487,8 +1585,6 @@ class BatteryCalculatorGUI(QWidget):
             self.battery_info_layout.addWidget(self.series_cells_entry, 1, 1)
             self.series_cells_label.show()
             self.series_cells_entry.show()
-            self.min_voltage_info_label.setText("Empty V: N/A")
-            self.max_voltage_info_label.setText("Full Charge V: N/A")
             return None, None, None # Explicitly return None for unpacking
 
         series_cells = inferred_s
@@ -1501,13 +1597,10 @@ class BatteryCalculatorGUI(QWidget):
         if series_cells is not None and series_cells > 0:
             min_v = series_cells * self.CELL_VOLTAGE_EMPTY
             max_v = series_cells * self.CELL_VOLTAGE_FULL
-            self.min_voltage_info_label.setText(f"Empty V: {min_v:.1f} (0%)")
-            self.max_voltage_info_label.setText(f"Full Charge V: {max_v:.1f} (100%)")
             return min_v, max_v, series_cells # Return valid values
         else:
-            self.min_voltage_info_label.setText("Empty V: N/A")
-            self.max_voltage_info_label.setText("N/A")
             return None, None, None
+
 
     def toggle_charge_input(self):
         # Remove widgets from layout before potentially re-adding them
@@ -1602,8 +1695,6 @@ class BatteryCalculatorGUI(QWidget):
                 self.battery_info_layout.addWidget(self.series_cells_entry, 1, 1) # Place at row 1, col 1
                 self.series_cells_label.show()
                 self.series_cells_entry.show()
-                self.min_voltage_info_label.setText("Empty V: N/A")
-                self.max_voltage_info_label.setText("Full Charge V: N/A")
                 return None, None, None # Explicitly return the tuple
 
         except ValueError:
@@ -1613,8 +1704,6 @@ class BatteryCalculatorGUI(QWidget):
             self.battery_info_layout.addWidget(self.series_cells_entry, 1, 1)
             self.series_cells_label.show()
             self.series_cells_entry.show()
-            self.min_voltage_info_label.setText("Empty V: N/A")
-            self.max_voltage_info_label.setText("Full Charge V: N/A")
             return None, None, None # Explicitly return the tuple
 
         series_cells = inferred_s
@@ -1627,12 +1716,8 @@ class BatteryCalculatorGUI(QWidget):
         if series_cells is not None and series_cells > 0:
             min_v = series_cells * self.CELL_VOLTAGE_EMPTY
             max_v = series_cells * self.CELL_VOLTAGE_FULL
-            self.min_voltage_info_label.setText(f"Empty V: {min_v:.1f} (0%)")
-            self.max_voltage_info_label.setText(f"Full Charge V: {max_v:.1f} (100%)")
             return min_v, max_v, series_cells # Return valid values
         else:
-            self.min_voltage_info_label.setText("Empty V: N/A")
-            self.max_voltage_info_label.setText("N/A")
             return None, None, None
 
 
@@ -1651,7 +1736,7 @@ class BatteryCalculatorGUI(QWidget):
         if min_voltage is None or max_voltage is None or series_cells is None:
             return None, None # Cannot proceed without valid battery range info
 
-        if voltage_override is not None: # If a specific voltage is passed (e.g., from ride log)
+        if voltage_override is not None: # If a specific voltage is passed (e.e., from ride log)
             current_voltage = voltage_override
             try:
                 # Calculate percentage from voltage
@@ -1887,6 +1972,10 @@ class BatteryCalculatorGUI(QWidget):
         wheel_diameter = self.wheel_diameter_entry.text()
         charge_rate = self.charge_rate_entry.text()
         preferred_cutoff = self.preferred_cutoff_entry.text()
+        charge_throttle_percent = self.charge_throttle_combo.currentText() # NEW
+        throttled_rate = self.throttled_rate_entry.text()               # NEW
+        bms_conditioning_time = self.bms_conditioning_combo.currentText() # NEW
+
 
         # Update labels with raw input values
         self.breakdown_voltage_label.setText(nominal_voltage)
@@ -1894,6 +1983,9 @@ class BatteryCalculatorGUI(QWidget):
         self.breakdown_wheel_diameter_label.setText(f"{wheel_diameter} in" if wheel_diameter else "N/A")
         self.breakdown_charge_rate_label.setText(charge_rate)
         self.breakdown_preferred_cutoff_label.setText(f"{preferred_cutoff}%" if preferred_cutoff else "N/A")
+        self.breakdown_charge_throttle_label.setText(charge_throttle_percent) # NEW
+        self.breakdown_throttled_rate_label.setText(f"{throttled_rate}A" if throttled_rate else "N/A") # NEW
+        self.breakdown_bms_conditioning_label.setText(bms_conditioning_time) # NEW
 
 
         # Calculate and update derived values for breakdown
@@ -1989,9 +2081,9 @@ class BatteryCalculatorGUI(QWidget):
 
             # --- Determine adjusted_wh_per_mile based on source ---
             adjusted_wh_per_mile = 0.0
-            if self.use_logged_efficiency and self.logged_wh_per_mile_average > 0:
-                adjusted_wh_per_mile = self.logged_wh_per_mile_average
-                self.efficiency_source_label.setText("Logged") # More concise
+            if self.use_logged_efficiency and self.active_logged_efficiency_value > 0:
+                adjusted_wh_per_mile = self.active_logged_efficiency_value
+                # The efficiency_source_label is already set by apply_selected_efficiency_to_calculator
             else:
                 # Calculate Adjusted Wh/mile based on Wheel Diameter and Driving Style (Predicted)
                 interpolation_factor = (wheel_diameter - self.SMALL_WHEEL_REF) / (self.LARGE_WHEEL_REF - self.SMALL_WHEEL_REF)
@@ -2048,9 +2140,12 @@ class BatteryCalculatorGUI(QWidget):
             self.efficiency_source_label.setText("Error")
 
     def calculate_charge_time_and_remaining_range(self):
-        """Calculates and displays remaining charge, range, and estimated time to full charge."""
+        """Calculates and displays remaining charge, range, and estimated time to full charge,
+           including charge throttle and BMS conditioning."""
         # Always clear previous results at the start
-        self.charge_time_label.setText("")
+        self.charge_time_label.setText("") # Total time
+        self.base_charge_time_label.setText("") # Base time
+        self.charge_time_difference_label.setText("") # Difference
         self.remaining_charge_percentage_label.setText("")
         self.remaining_range_label.setText("")
 
@@ -2060,6 +2155,9 @@ class BatteryCalculatorGUI(QWidget):
         if current_percentage is None:
             if not self.is_initializing: # Suppress during initialization
                 pass # Suppress repetitive message
+            self.charge_time_label.setText("N/A")
+            self.base_charge_time_label.setText("N/A")
+            self.charge_time_difference_label.setText("N/A")
             return
 
         try:
@@ -2072,10 +2170,32 @@ class BatteryCalculatorGUI(QWidget):
             charge_rate = float(charge_rate_str) if charge_rate_str else 0.0
             capacity = float(capacity_str) if capacity_str else 0.0
             
+            # Get new throttle settings
+            throttle_percent_str = self.charge_throttle_combo.currentText()
+            throttle_percent = 0.0
+            if throttle_percent_str != "None":
+                throttle_percent = float(throttle_percent_str.replace('%', ''))
+
+            throttled_rate_str = self.throttled_rate_entry.text()
+            throttled_rate = float(throttled_rate_str) if throttled_rate_str else 0.0
+
+            # Get BMS conditioning time
+            bms_conditioning_str = self.bms_conditioning_combo.currentText()
+            bms_conditioning_minutes = 0
+            if bms_conditioning_str == "15 min":
+                bms_conditioning_minutes = 15
+            elif bms_conditioning_str == "30 min":
+                bms_conditioning_minutes = 30
+            elif bms_conditioning_str == "1 hour":
+                bms_conditioning_minutes = 60
+
             # Check for invalid primary inputs that can prevent this entire calculation
             if nominal_voltage <= 0 or capacity <= 0 or charge_rate <= 0:
                 if not self.is_initializing: # Suppress during initialization
                     pass # Suppress repetitive message
+                self.charge_time_label.setText("N/A")
+                self.base_charge_time_label.setText("N/A")
+                self.charge_time_difference_label.setText("N/A")
                 return
 
             capacity_ah = 0
@@ -2088,11 +2208,58 @@ class BatteryCalculatorGUI(QWidget):
             if capacity_ah <= 0:
                 if not self.is_initializing: # Suppress during initialization
                     pass # Suppress repetitive message
+                self.charge_time_label.setText("N/A")
+                self.base_charge_time_label.setText("N/A")
+                self.charge_time_difference_label.setText("N/A")
                 return
 
-            remaining_capacity_ah_to_full = capacity_ah * (1 - (current_percentage / 100))
-            estimated_charge_time = remaining_capacity_ah_to_full / charge_rate
-            self.charge_time_label.setText(self.format_time_to_hours_minutes(estimated_charge_time))
+            # --- Base Charge Time to 100% (without throttle/conditioning) ---
+            remaining_capacity_ah_to_full = capacity_ah * (100 - current_percentage) / 100
+            base_estimated_charge_time_hours = remaining_capacity_ah_to_full / charge_rate if charge_rate > 0 else float('inf')
+
+            self.base_charge_time_label.setText(self.format_time_to_hours_minutes(base_estimated_charge_time_hours))
+
+            # --- Calculate Throttled Charge Time ---
+            # Start with base time, then adjust
+            total_estimated_charge_time_hours = base_estimated_charge_time_hours
+
+            if throttle_percent > 0 and throttled_rate > 0 and charge_rate > 0:
+                # Calculate the percentage at which throttling begins
+                throttle_start_percentage = 100 - throttle_percent
+
+                if current_percentage < throttle_start_percentage:
+                    # Phase 1: Charge at normal rate until throttle_start_percentage
+                    ah_to_throttle_start = capacity_ah * ((throttle_start_percentage - current_percentage) / 100)
+                    time_to_throttle_start_hours = ah_to_throttle_start / charge_rate
+
+                    # Phase 2: Charge the remaining throttle_percent at throttled_rate
+                    ah_in_throttled_segment = capacity_ah * (throttle_percent / 100)
+                    time_in_throttled_segment_hours = ah_in_throttled_segment / throttled_rate
+
+                    total_estimated_charge_time_hours = time_to_throttle_start_hours + time_in_throttled_segment_hours
+                elif current_percentage >= throttle_start_percentage:
+                    # Entire remaining charge is within the throttled segment
+                    ah_remaining_throttled = capacity_ah * ((100 - current_percentage) / 100)
+                    total_estimated_charge_time_hours = ah_remaining_throttled / throttled_rate
+                
+                # Ensure throttled time is not less than base time for the same amount of charge
+                # This prevents scenarios where a very high throttled_rate makes it faster than normal
+                if total_estimated_charge_time_hours < base_estimated_charge_time_hours:
+                    total_estimated_charge_time_hours = base_estimated_charge_time_hours
+
+
+            # --- Add BMS Conditioning Time ---
+            total_estimated_charge_time_hours += (bms_conditioning_minutes / 60.0)
+
+            self.charge_time_label.setText(self.format_time_to_hours_minutes(total_estimated_charge_time_hours))
+
+            # --- Calculate Difference ---
+            if base_estimated_charge_time_hours != float('inf') and total_estimated_charge_time_hours != float('inf'):
+                difference_hours = total_estimated_charge_time_hours - base_estimated_charge_time_hours
+                self.charge_time_difference_label.setText(self.format_time_to_hours_minutes(difference_hours))
+            else:
+                self.charge_time_difference_label.setText("N/A")
+
 
             self.remaining_charge_percentage_label.setText(f"{100 - current_percentage:.2f}") # Removed % here, added in init_ui
 
@@ -2106,12 +2273,21 @@ class BatteryCalculatorGUI(QWidget):
         except ValueError:
             if not self.is_initializing: # Suppress during initialization
                 pass # Suppress repetitive message
+            self.charge_time_label.setText("N/A")
+            self.base_charge_time_label.setText("N/A")
+            self.charge_time_difference_label.setText("N/A")
         except ZeroDivisionError:
             if not self.is_initializing: # Suppress during initialization
                 pass # Suppress repetitive message
+            self.charge_time_label.setText("N/A")
+            self.base_charge_time_label.setText("N/A")
+            self.charge_time_difference_label.setText("N/A")
         except Exception as e:
             if not self.is_initializing: # Suppress during initialization
                 QMessageBox.critical(self, "Internal Error", f"An unexpected error occurred during charge time calculation: {e}")
+            self.charge_time_label.setText("Error")
+            self.base_charge_time_label.setText("Error")
+            self.charge_time_difference_label.setText("Error")
 
     def clear_fields(self, keep_profile_name=False):
         """Clears all input fields, and output labels.
@@ -2126,23 +2302,30 @@ class BatteryCalculatorGUI(QWidget):
         self.current_voltage_entry.clear()
         self.motor_wattage_entry.clear()
         self.wheel_diameter_entry.clear()
-        self.preferred_cutoff_entry.setText("25") # NEW: Reset cutoff to default
+        self.preferred_cutoff_entry.setText("25") # Reset cutoff to default
         
         # Reset comboboxes and radiobuttons to default values
         self.capacity_type_combo.setCurrentText("Wh")
         self.driving_style_combo.setCurrentText("Casual")
         self.percent_radio.setChecked(True) # Set percentage radio button
 
+        # NEW: Clear new charging fields
+        self.charge_throttle_combo.setCurrentText("None")
+        self.throttled_rate_entry.clear()
+        self.bms_conditioning_combo.setCurrentText("None")
+
         # Update visibility and info labels based on cleared/default states
         self.toggle_charge_input()
         self.update_capacity_label()
-        self.update_voltage_info_labels()
+        self.update_voltage_info_labels() # This no longer updates min/max voltage labels, but still manages series cells visibility
 
         # Clear output labels (now safe as they are initialized in __init__)
         self.calculated_range_label.setText("")
         self.remaining_range_label.setText("")
         self.remaining_charge_percentage_label.setText("")
-        self.charge_time_label.setText("")
+        self.charge_time_label.setText("") # Total time
+        self.base_charge_time_label.setText("") # Base time
+        self.charge_time_difference_label.setText("") # Difference
         self.miles_per_wh_label.setText("")
         self.miles_per_ah_label.setText("")
         self.percentage_after_charge_label.setText("")
@@ -2165,8 +2348,13 @@ class BatteryCalculatorGUI(QWidget):
         self.breakdown_motor_watts_label.setText("")
         self.breakdown_wheel_diameter_label.setText("")
         self.breakdown_charge_rate_label.setText("")
-        self.breakdown_preferred_cutoff_label.setText("") # NEW: Clear breakdown cutoff
-        self.breakdown_preferred_cutoff_voltage_label.setText("") # NEW: Clear breakdown cutoff voltage
+        self.breakdown_preferred_cutoff_label.setText("") # Clear breakdown cutoff
+        self.breakdown_preferred_cutoff_voltage_label.setText("") # Clear breakdown cutoff voltage
+        # NEW: Clear new charging breakdown fields
+        self.breakdown_charge_throttle_label.setText("")
+        self.breakdown_throttled_rate_label.setText("")
+        self.breakdown_bms_conditioning_label.setText("")
+
         self.efficiency_source_label.setText("Predicted") # Reset efficiency source
         self.reset_efficiency_source(show_message=False) # Reset the internal flag too, without a message
         
@@ -2175,15 +2363,10 @@ class BatteryCalculatorGUI(QWidget):
         self.update_ride_log_table() # This will clear it if no data is loaded
         self.calculate_average_efficiency() # This will reset the average label
 
-        # NEW: Clear last ride display
+        # NEW: Clear last ride display (and the new main tab labels)
         self.last_ride_data = {} # Clear the stored data
         self.update_last_ride_display()
 
-        # Clear quick tools fields
-        self.percent_input_quick.clear()
-        self.voltage_output_quick.setText("N/A")
-        self.voltage_input_quick.clear()
-        self.percentage_output_quick.setText("N/A")
         # Clear timer fields and reset timer
         self.countdown_hours_entry.setText("0")
         self.countdown_minutes_entry.setText("0")
@@ -2202,8 +2385,11 @@ class BatteryCalculatorGUI(QWidget):
         breakdown_text += f"Motor Watts: {self.breakdown_motor_watts_label.text()}\n"
         breakdown_text += f"  Wheel Diameter: {self.breakdown_wheel_diameter_label.text()}\n"
         breakdown_text += f"Charge Rate: {self.breakdown_charge_rate_label.text()}\n"
-        breakdown_text += f"Preferred Cutoff %: {self.breakdown_preferred_cutoff_label.text()}\n" # NEW: Add cutoff to export
-        breakdown_text += f"Preferred Cutoff V: {self.breakdown_preferred_cutoff_voltage_label.text()}\n" # NEW: Add cutoff voltage to export
+        breakdown_text += f"Preferred Cutoff %: {self.breakdown_preferred_cutoff_label.text()}\n"
+        breakdown_text += f"Preferred Cutoff V: {self.breakdown_preferred_cutoff_voltage_label.text()}\n"
+        breakdown_text += f"Charge Throttle %: {self.breakdown_charge_throttle_label.text()}\n" # NEW
+        breakdown_text += f"Throttled Rate: {self.breakdown_throttled_rate_label.text()}\n"   # NEW
+        breakdown_text += f"BMS Conditioning: {self.breakdown_bms_conditioning_label.text()}\n" # NEW
         breakdown_text += f"Efficiency Source: {self.efficiency_source_label.text()}\n" # Include efficiency source
 
         # Add results section values to the export for completeness, especially moved ones
@@ -2218,20 +2404,21 @@ class BatteryCalculatorGUI(QWidget):
         breakdown_text += f"Current %: {self.current_state_percent_result_label.text()}%\n" # Added % directly here
         breakdown_text += f"Current V: {self.current_state_voltage_result_label.text()}V\n" # Added V directly here
         breakdown_text += f"Remaining Charge to 100%: {self.remaining_charge_percentage_label.text()}%\n" # Added % directly here
-        breakdown_text += f"Estimated Charge Time to 100%: {self.charge_time_label.text()}\n"
+        breakdown_text += f"Base Charge Time (to 100%): {self.base_charge_time_label.text()}\n" # NEW
+        breakdown_text += f"Total Charge Time (with options): {self.charge_time_label.text()}\n" # NEW
+        breakdown_text += f"Additional Time (due to options): {self.charge_time_difference_label.text()}\n" # NEW
         breakdown_text += f"Charge Duration: {self.results_charge_duration_label.text()}\n"
         breakdown_text += f"Percentage after set charge duration: {self.percentage_after_charge_label.text()}%\n" # Added % directly here
         breakdown_text += f"Miles/Wh: {self.miles_per_wh_label.text()}\n"
         breakdown_text += f"Miles/Ah: {self.miles_per_ah_label.text()}\n"
         breakdown_text += f"Efficiency Source: {self.efficiency_source_label.text()}\n"
 
-        # NEW: Add last ride details to export
-        if self.last_ride_data:
-            breakdown_text += "\n--- Last Logged Ride ---\n"
-            breakdown_text += f"Last Ride Date: {self.last_ride_data.get('date', 'N/A')}\n"
-            breakdown_text += f"Last Ride Distance: {self.last_ride_data.get('distance_miles', 'N/A')} miles\n"
-            breakdown_text += f"Last Ride Wh Consumed: {self.last_ride_data.get('wh_consumed', 'N/A')} Wh\n"
-            breakdown_text += f"Last Ride Wh/mile: {self.last_ride_data.get('wh_per_mile', 'N/A')} Wh/mile\n"
+        # NEW: Add logged rides info from the new main tab group box (now in breakdown)
+        breakdown_text += "\n--- Logged Rides Info ---\n"
+        breakdown_text += f"{self.logged_last_ride_wh_per_mile_label.text()}\n"
+        breakdown_text += f"{self.logged_last_ride_miles_per_wh_label.text()}\n"
+        breakdown_text += f"{self.logged_average_wh_per_mile_label.text()}\n"
+        breakdown_text += f"{self.logged_average_miles_per_wh_label.text()}\n"
 
 
         file_path, _ = QFileDialog.getSaveFileName(
@@ -2435,7 +2622,8 @@ class BatteryCalculatorGUI(QWidget):
             QMessageBox.information(self, "Deleted", f"{len(selected_rows)} ride(s) deleted.")
 
     def calculate_average_efficiency(self):
-        """Calculates the average Wh/mile and Miles/Wh from all logged rides in the current profile."""
+        """Calculates the average Wh/mile and Miles/Wh from all logged rides in the current profile.
+           Also updates the relevant labels on both tabs."""
         current_profile_log = self.all_profiles.get(self.current_profile_name, {}).get("ride_log", [])
         
         total_wh_consumed = 0.0
@@ -2459,49 +2647,88 @@ class BatteryCalculatorGUI(QWidget):
         if total_distance_miles > 0 and valid_rides_for_average > 0:
             average_wh_per_mile = total_wh_consumed / total_distance_miles
             average_miles_per_wh = 1 / average_wh_per_mile
-            self.average_wh_per_mile_label.setText(f"Average Wh/mile: {average_wh_per_mile:.2f}")
-            self.average_miles_per_wh_label.setText(f"Average Miles/Wh: {average_miles_per_wh:.2f}")
+            self.average_wh_per_mile_label.setText(f"Average Wh/mile: {average_wh_per_mile:.2f}") # Ride Log Tab
+            self.average_miles_per_wh_label.setText(f"Average Miles/Wh: {average_miles_per_wh:.2f}") # Ride Log Tab
             self.logged_wh_per_mile_average = average_wh_per_mile # Store for apply function
+
+            # Update new labels on main tab (now in breakdown column)
+            self.logged_average_wh_per_mile_label.setText(f"Average Wh/mile: {average_wh_per_mile:.2f}")
+            self.logged_average_miles_per_wh_label.setText(f"Average Miles/Wh: {average_miles_per_wh:.2f}")
+
         else:
             self.average_wh_per_mile_label.setText("Average Wh/mile: N/A (No valid rides logged or invalid data)")
             self.average_miles_per_wh_label.setText("Average Miles/Wh: N/A (No valid rides logged or invalid data)")
             self.logged_wh_per_mile_average = 0.0 # Reset stored average
 
-    def apply_logged_efficiency_to_calculator(self):
-        """Applies the calculated average Wh/mile from the ride log to the calculator tab."""
+            # Update new labels on main tab (now in breakdown column)
+            self.logged_average_wh_per_mile_label.setText("Average Wh/mile: N/A")
+            self.logged_average_miles_per_wh_label.setText("Average Miles/Wh: N/A")
+
+    def apply_default_logged_efficiency(self):
+        """Applies the average logged efficiency to the calculator by default if available."""
         if self.logged_wh_per_mile_average > 0:
             self.use_logged_efficiency = True
-            QMessageBox.information(self, "Efficiency Applied",
-                                    f"Average efficiency ({self.logged_wh_per_mile_average:.2f} Wh/mile) from logged rides will now be used for range calculations on the Battery Calculator tab.")
+            self.active_logged_efficiency_value = self.logged_wh_per_mile_average
+            self.efficiency_source_label.setText("Logged (Average)")
             self.calculate_all() # Recalculate range with the new efficiency
+        else:
+            # If no average data, ensure it defaults to predicted
+            self.reset_efficiency_source(show_message=False)
+
+    def apply_last_ride_efficiency_to_calculator(self):
+        """Applies the last logged ride's efficiency to the calculator tab."""
+        last_ride_wh_per_mile = self.last_ride_data.get('wh_per_mile', 0.0)
+        if last_ride_wh_per_mile > 0:
+            self.use_logged_efficiency = True
+            self.active_logged_efficiency_value = last_ride_wh_per_mile
+            self.efficiency_source_label.setText("Logged (Last Ride)")
+            QMessageBox.information(self, "Efficiency Applied",
+                                    f"Efficiency ({last_ride_wh_per_mile:.2f} Wh/mile) from Last Ride will now be used for range calculations.")
+            self.calculate_all()
+        else:
+            QMessageBox.warning(self, "No Last Ride Data",
+                                "No valid last ride data available to apply. Please log a ride first.")
+            self.reset_efficiency_source(show_message=False) # Fallback to predicted
+
+    def apply_average_efficiency_to_calculator(self):
+        """Applies the average logged efficiency to the calculator tab."""
+        if self.logged_wh_per_mile_average > 0:
+            self.use_logged_efficiency = True
+            self.active_logged_efficiency_value = self.logged_wh_per_mile_average
+            self.efficiency_source_label.setText("Logged (Average)")
+            QMessageBox.information(self, "Efficiency Applied",
+                                    f"Average efficiency ({self.logged_wh_per_mile_average:.2f} Wh/mile) from logged rides will now be used for range calculations.")
+            self.calculate_all()
         else:
             QMessageBox.warning(self, "No Logged Data",
                                 "No valid logged ride data available to calculate an average efficiency. Please log some rides first.")
-            self.use_logged_efficiency = False
-            self.efficiency_source_label.setText("Predicted") # Ensure label reflects this
+            self.reset_efficiency_source(show_message=False) # Fallback to predicted
 
     def reset_efficiency_source(self, show_message=True):
         """Resets the calculator to use predicted efficiency (based on driving style/wheel diameter).
            'show_message' controls whether a QMessageBox is displayed."""
         self.use_logged_efficiency = False
-        self.logged_wh_per_mile_average = 0.0
+        self.active_logged_efficiency_value = 0.0 # Reset the active value
         self.efficiency_source_label.setText("Predicted")
         self.calculate_all() # Recalculate range with predicted efficiency
         if show_message:
             QMessageBox.information(self, "Efficiency Reset", "Calculator is now using predicted efficiency based on driving style.")
 
     def update_last_ride_display(self):
-        """Updates the labels in the 'Last Logged Ride' section of the Breakdown column."""
+        """Updates the labels in the 'Logged Rides Info' section of the Breakdown column."""
+        # This method now only updates the labels in the new combined group box
         if self.last_ride_data:
-            self.breakdown_last_ride_date_label.setText(self.last_ride_data.get('date', 'N/A'))
-            self.breakdown_last_ride_distance_label.setText(f"{self.last_ride_data.get('distance_miles', 'N/A')} miles")
-            self.breakdown_last_ride_wh_label.setText(f"{self.last_ride_data.get('wh_consumed', 'N/A')} Wh")
-            self.breakdown_last_ride_wh_per_mile_label.setText(f"{self.last_ride_data.get('wh_per_mile', 'N/A')} Wh/mile")
+            last_ride_wh_per_mile = self.last_ride_data.get('wh_per_mile', 0.0)
+            if last_ride_wh_per_mile > 0:
+                self.logged_last_ride_wh_per_mile_label.setText(f"Last Ride Wh/mile: {last_ride_wh_per_mile:.2f}")
+                self.logged_last_ride_miles_per_wh_label.setText(f"Last Ride Miles/Wh: {1/last_ride_wh_per_mile:.2f}")
+            else:
+                self.logged_last_ride_wh_per_mile_label.setText("Last Ride Wh/mile: N/A")
+                self.logged_last_ride_miles_per_wh_label.setText("Last Ride Miles/Wh: N/A")
         else:
-            self.breakdown_last_ride_date_label.setText("N/A")
-            self.breakdown_last_ride_distance_label.setText("N/A")
-            self.breakdown_last_ride_wh_label.setText("N/A")
-            self.breakdown_last_ride_wh_per_mile_label.setText("N/A")
+            self.logged_last_ride_wh_per_mile_label.setText("Last Ride Wh/mile: N/A")
+            self.logged_last_ride_miles_per_wh_label.setText("Last Ride Miles/Wh: N/A")
+
 
     def export_ride_log_to_file(self):
         """Exports the current profile's ride log to a JSON file."""
@@ -2590,7 +2817,7 @@ class BatteryCalculatorGUI(QWidget):
             except FileNotFoundError:
                 QMessageBox.critical(self, "Import Error", "File not found.")
             except json.JSONDecodeError:
-                QMessageBox.critical(self, "Import Error", "Invalid JSON format in the selected file.")
+                QMessageBox.critical(self, "Import Error", "Invalid JSON format in the selected file. Ensure it's a valid SuperCycle App export.")
             except Exception as e:
                 QMessageBox.critical(self, "Import Error", f"An unexpected error occurred during import: {e}")
         else:
