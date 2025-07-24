@@ -56,7 +56,7 @@ class BatteryCalculatorGUI(QWidget):
     def __init__(self):
         super().__init__()
         # Changed window title to reflect "BatteryUtils" and version number
-        self.setWindowTitle("BatteryUtils v1.07.12") # Version bumped from 1.07.11 to 1.07.12
+        self.setWindowTitle("BatteryUtils v1.07.14") # Version bumped from 1.07.13 to 1.07.14
 
         self.setGeometry(100, 100, 950, 650) # x, y, width, height for the window, adjusted for three columns and smaller overall height
 
@@ -145,8 +145,16 @@ class BatteryCalculatorGUI(QWidget):
         self.timer_battery_max_v = None
         self.timer_start_datetime = None
 
+        # NEW: Variables to store calculated total energy and adjusted efficiency for timer range estimation
+        self.full_charge_range = 0.0 # Already exists, used for remaining range
+        self.total_energy_wh_calculated = 0.0
+        self.adjusted_wh_per_mile_calculated = 0.0
+
 
         self.init_ui()
+
+        # Set checkbox to checked by default
+        self.show_battery_state_checkbox.setChecked(True) # Set default state here
 
         # Load all profiles and then initialize the combo box
         self.load_all_profiles()
@@ -154,6 +162,10 @@ class BatteryCalculatorGUI(QWidget):
         # Load data for the initial profile (either last active or default)
         self.load_profile_data(self.current_profile_name)
 
+        # After loading data, ensure battery state display is updated if checkbox is checked
+        # This will call update_timer_battery_state if conditions are met
+        self.toggle_timer_battery_display(self.show_battery_state_checkbox.isChecked())
+        
         # Set initialization flag to False after all initial loading is complete
         self.is_initializing = False
 
@@ -572,7 +584,7 @@ class BatteryCalculatorGUI(QWidget):
         timer_display_h_layout.addStretch(1) # Push to center
         self.timer_display_label = QLabel("00:00:00")
         self.timer_display_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.timer_display_label.setStyleSheet("font-size: 24pt; font-weight: bold; color: #333;") # Even smaller font
+        self.timer_display_label.setStyleSheet("font-size: 20pt; font-weight: bold; color: #333;") # Smaller font
         timer_display_h_layout.addWidget(self.timer_display_label)
 
         self.timer_direction_label = QLabel(" ")
@@ -603,9 +615,27 @@ class BatteryCalculatorGUI(QWidget):
         # self.timer_estimated_voltage_label.hide() # Hide on init, show when checkbox is checked
 
         self.charge_timer_layout.addLayout(est_battery_state_h_layout) # Add the new horizontal layout
+
+        # NEW: Estimated range labels (vertical layout for stacking)
+        est_range_v_layout = QVBoxLayout()
+        self.timer_estimated_remaining_range_label = QLabel("Est. Range: N/A")
+        self.timer_estimated_remaining_range_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.timer_estimated_remaining_range_label.setStyleSheet("font-weight: bold; font-size: 10pt; color: #006400;")
+        est_range_v_layout.addWidget(self.timer_estimated_remaining_range_label)
+
+        self.timer_estimated_range_to_cutoff_label = QLabel("Est. Range to Cutoff: N/A")
+        self.timer_estimated_range_to_cutoff_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.timer_estimated_range_to_cutoff_label.setStyleSheet("font-weight: bold; font-size: 10pt; color: #006400;")
+        est_range_v_layout.addWidget(self.timer_estimated_range_to_cutoff_label)
+
+        self.charge_timer_layout.addLayout(est_range_v_layout) # Add the new vertical layout
+
+
         # Hide these labels initially
         self.timer_estimated_percentage_label.hide()
         self.timer_estimated_voltage_label.hide()
+        self.timer_estimated_remaining_range_label.hide() # Hide new labels
+        self.timer_estimated_range_to_cutoff_label.hide() # Hide new labels
 
 
         # Add the new Charge Timer group box to the results_display_layout
@@ -1070,8 +1100,13 @@ class BatteryCalculatorGUI(QWidget):
             # Hide battery state labels when stopping
             self.timer_estimated_percentage_label.hide()
             self.timer_estimated_voltage_label.hide()
+            self.timer_estimated_remaining_range_label.hide() # Hide new labels
+            self.timer_estimated_range_to_cutoff_label.hide() # Hide new labels
             self.timer_estimated_percentage_label.setText("Est. %: N/A")
             self.timer_estimated_voltage_label.setText("Est. V: N/A")
+            self.timer_estimated_remaining_range_label.setText("Est. Range: N/A")
+            self.timer_estimated_range_to_cutoff_label.setText("Est. Range to Cutoff: N/A")
+
 
         else:
             try:
@@ -1079,27 +1114,20 @@ class BatteryCalculatorGUI(QWidget):
                 minutes = int(self.countdown_minutes_entry.text())
                 seconds = int(self.countdown_seconds_entry.text())
 
-                if self.time_remaining_seconds == 0 and not self.counting_up: # Only set initial if starting fresh countdown
-                    self.time_remaining_seconds = hours * 3600 + minutes * 60 + seconds
-                    self.initial_countdown_seconds = self.time_remaining_seconds # Store for reset
-                    self.counting_up = False # Ensure it starts counting down
+                # BUG FIX: Always recalculate time_remaining_seconds and initial_countdown_seconds
+                # when starting the timer, regardless of its previous state.
+                # This ensures new input values are always honored.
+                self.time_remaining_seconds = hours * 3600 + minutes * 60 + seconds
+                self.initial_countdown_seconds = self.time_remaining_seconds # Store for reset
+
+                if self.time_remaining_seconds <= 0: # If input was 0 or negative, start counting up
+                    self.counting_up = True
+                    self.timer_direction_label.setText("↑")
+                    self.timer_display_label.setStyleSheet("font-size: 20pt; font-weight: bold; color: #007bff;") # Blue for count up
+                else: # If input was positive, start counting down
+                    self.counting_up = False
                     self.timer_direction_label.setText("↓")
-                    self.timer_display_label.setStyleSheet("font-size: 24pt; font-weight: bold; color: #333;") # Reset color
-
-                if self.time_remaining_seconds <= 0 and not self.counting_up: # If input was 0, start counting up immediately
-                    self.counting_up = True
-                    self.timer_direction_label.setText("↑")
-                    self.timer_display_label.setStyleSheet("font-size: 24pt; font-weight: bold; color: #007bff;") # Blue for count up
-
-                if self.time_remaining_seconds == 0 and self.counting_up: # If it was already counting up from 0
-                    pass # Continue counting up
-
-                if self.time_remaining_seconds < 0: # Should not happen if clamped, but as a safeguard
-                    self.time_remaining_seconds = 0
-                    self.counting_up = True
-                    self.timer_direction_label.setText("↑")
-                    self.timer_display_label.setStyleSheet("font-size: 24pt; font-weight: bold; color: #007bff;") # Blue for count up
-
+                    self.timer_display_label.setStyleSheet("font-size: 20pt; font-weight: bold; color: #333;") # Default color
 
                 self.timer.start(1000) # Update every second
                 self.timer_running = True
@@ -1147,18 +1175,26 @@ class BatteryCalculatorGUI(QWidget):
                     self.timer_battery_min_v, self.timer_battery_max_v, _ = self.get_derived_voltage_range_and_s()
                     self.timer_start_datetime = datetime.now()
 
-                    if self.timer_initial_charge_percentage is None or self.timer_total_charge_time_hours is None or self.timer_total_charge_time_hours <= 0 or self.timer_battery_min_v is None or self.timer_battery_max_v is None:
+                    # Check if essential data for *all* estimations is available
+                    if (self.timer_initial_charge_percentage is None or self.timer_total_charge_time_hours is None or
+                        self.timer_total_charge_time_hours <= 0 or self.timer_battery_min_v is None or
+                        self.timer_battery_max_v is None or self.total_energy_wh_calculated <= 0 or
+                        self.adjusted_wh_per_mile_calculated <= 0): # Added check for range calculation data
                         QMessageBox.warning(self, "Battery State Estimation Warning",
-                                            "Cannot estimate battery state: Please ensure valid 'Current Battery State' and 'Charging' information is entered and calculated on the 'Battery Calculator' tab (click 'Calculate' first).")
+                                            "Cannot estimate battery state and range: Please ensure valid 'Current Battery State', 'Charging', 'Battery Info', and 'Motor/Bike Info' is entered and calculated on the 'Battery Calculator' tab (click 'Calculate' first).")
                         self.timer_estimated_percentage_label.setText("Est. %: N/A (Info Missing)")
                         self.timer_estimated_voltage_label.setText("Est. V: N/A (Info Missing)")
-                        self.timer_estimated_percentage_label.show() # Show error state
-                        self.timer_estimated_voltage_label.show() # Show error state
+                        self.timer_estimated_remaining_range_label.setText("Est. Range: N/A (Info Missing)") # New
+                        self.timer_estimated_range_to_cutoff_label.setText("Est. Range to Cutoff: N/A (Info Missing)") # New
+                        self.show_battery_state_checkbox.setChecked(False) # Uncheck if info is missing
                     else:
                         # Initial update of battery state display
                         self.update_timer_battery_state()
                         self.timer_estimated_percentage_label.show()
                         self.timer_estimated_voltage_label.show()
+                        self.timer_estimated_remaining_range_label.show() # Show new labels
+                        self.timer_estimated_range_to_cutoff_label.show() # Show new labels
+
 
             except ValueError:
                 QMessageBox.critical(self, "Input Error", "Please enter valid numbers for hours, minutes, and seconds.")
@@ -1173,12 +1209,12 @@ class BatteryCalculatorGUI(QWidget):
                 self.time_remaining_seconds = 0
                 self.counting_up = True
                 self.timer_direction_label.setText("↑")
-                self.timer_display_label.setStyleSheet("font-size: 24pt; font-weight: bold; color: #007bff;") # Blue for count up
+                self.timer_display_label.setStyleSheet("font-size: 20pt; font-weight: bold; color: #007bff;") # Blue for count up
                 # Optionally play a sound or show a notification when countdown ends
         else:
             self.time_remaining_seconds += 1
             self.timer_direction_label.setText("↑") # Ensure it stays up if it was already up
-            self.timer_display_label.setStyleSheet("font-size: 24pt; font-weight: bold; color: #007bff;") # Blue for count up
+            self.timer_display_label.setStyleSheet("font-size: 20pt; font-weight: bold; color: #007bff;") # Blue for count up
 
         self.update_timer_display()
         
@@ -1193,7 +1229,9 @@ class BatteryCalculatorGUI(QWidget):
             self.timer_total_charge_time_hours > 0 and
             self.timer_battery_min_v is not None and
             self.timer_battery_max_v is not None and
-            self.timer_start_datetime is not None):
+            self.timer_start_datetime is not None and
+            self.total_energy_wh_calculated > 0 and # Ensure these are available for range
+            self.adjusted_wh_per_mile_calculated > 0):
 
             elapsed_seconds = (datetime.now() - self.timer_start_datetime).total_seconds()
             elapsed_hours = elapsed_seconds / 3600.0
@@ -1222,12 +1260,32 @@ class BatteryCalculatorGUI(QWidget):
 
             self.timer_estimated_percentage_label.setText(f"Est. %: {estimated_percent:.2f}%")
             self.timer_estimated_voltage_label.setText(f"Est. V: {estimated_voltage:.2f}V")
+
+            # Calculate estimated remaining range
+            estimated_remaining_range = self.full_charge_range * (estimated_percent / 100)
+            self.timer_estimated_remaining_range_label.setText(f"Est. Range: {estimated_remaining_range:.2f} miles")
+
+            # Calculate estimated range to cutoff
+            preferred_cutoff_str = self.preferred_cutoff_entry.text()
+            preferred_cutoff_percentage = float(preferred_cutoff_str) if preferred_cutoff_str else 0.0
+
+            if estimated_percent <= preferred_cutoff_percentage:
+                self.timer_estimated_range_to_cutoff_label.setText("Est. Range to Cutoff: At/Below Cutoff")
+            else:
+                percent_difference_to_cutoff = estimated_percent - preferred_cutoff_percentage
+                wh_available_to_cutoff = self.total_energy_wh_calculated * (percent_difference_to_cutoff / 100)
+                estimated_range_to_cutoff = wh_available_to_cutoff / self.adjusted_wh_per_mile_calculated
+                self.timer_estimated_range_to_cutoff_label.setText(f"Est. Range to Cutoff: {estimated_range_to_cutoff:.2f} miles")
+
+
         else:
             self.timer_estimated_percentage_label.setText("Est. %: N/A")
             self.timer_estimated_voltage_label.setText("Est. V: N/A")
+            self.timer_estimated_remaining_range_label.setText("Est. Range: N/A")
+            self.timer_estimated_range_to_cutoff_label.setText("Est. Range to Cutoff: N/A")
 
     def toggle_timer_battery_display(self, checked):
-        """Toggles the visibility of the estimated battery state labels."""
+        """Toggles the visibility of the estimated battery state and range labels."""
         if checked:
             # If timer is already running, update immediately
             if self.timer_running:
@@ -1253,28 +1311,42 @@ class BatteryCalculatorGUI(QWidget):
                 self.timer_battery_min_v, self.timer_battery_max_v, _ = self.get_derived_voltage_range_and_s()
                 self.timer_start_datetime = datetime.now() # Reset start time for accurate elapsed calculation
 
+                # Check if essential data for *all* estimations is available
                 if (self.timer_initial_charge_percentage is None or self.timer_total_charge_time_hours is None or
                     self.timer_total_charge_time_hours <= 0 or self.timer_battery_min_v is None or
-                    self.timer_battery_max_v is None):
+                    self.timer_battery_max_v is None or self.total_energy_wh_calculated <= 0 or
+                    self.adjusted_wh_per_mile_calculated <= 0): # Added check for range calculation data
                     QMessageBox.warning(self, "Battery State Estimation Warning",
-                                        "Cannot estimate battery state: Please ensure valid 'Current Battery State' and 'Charging' information is entered and calculated on the 'Battery Calculator' tab (click 'Calculate' first).")
+                                        "Cannot estimate battery state and range: Please ensure valid 'Current Battery State', 'Charging', 'Battery Info', and 'Motor/Bike Info' is entered and calculated on the 'Battery Calculator' tab (click 'Calculate' first).")
                     self.timer_estimated_percentage_label.setText("Est. %: N/A (Info Missing)")
                     self.timer_estimated_voltage_label.setText("Est. V: N/A (Info Missing)")
+                    self.timer_estimated_remaining_range_label.setText("Est. Range: N/A (Info Missing)") # New
+                    self.timer_estimated_range_to_cutoff_label.setText("Est. Range to Cutoff: N/A (Info Missing)") # New
                     self.show_battery_state_checkbox.setChecked(False) # Uncheck if info is missing
                 else:
                     self.timer_estimated_percentage_label.show()
                     self.timer_estimated_voltage_label.show()
+                    self.timer_estimated_remaining_range_label.show() # Show new labels
+                    self.timer_estimated_range_to_cutoff_label.show() # Show new labels
                     self.update_timer_battery_state() # Initial update
             else: # Timer is not running, just show N/A placeholders
                 self.timer_estimated_percentage_label.setText("Est. %: N/A")
                 self.timer_estimated_voltage_label.setText("Est. V: N/A")
+                self.timer_estimated_remaining_range_label.setText("Est. Range: N/A") # New
+                self.timer_estimated_range_to_cutoff_label.setText("Est. Range to Cutoff: N/A") # New
                 self.timer_estimated_percentage_label.show()
                 self.timer_estimated_voltage_label.show()
+                self.timer_estimated_remaining_range_label.show() # Show new labels
+                self.timer_estimated_range_to_cutoff_label.show() # Show new labels
         else:
             self.timer_estimated_percentage_label.hide()
             self.timer_estimated_voltage_label.hide()
+            self.timer_estimated_remaining_range_label.hide() # Hide new labels
+            self.timer_estimated_range_to_cutoff_label.hide() # Hide new labels
             self.timer_estimated_percentage_label.setText("Est. %: N/A")
-            self.timer_estimated_voltage_label.setText("Est. V: N/A") # Clear text when hidden
+            self.timer_estimated_voltage_label.setText("Est. V: N/A")
+            self.timer_estimated_remaining_range_label.setText("Est. Range: N/A") # Clear text when hidden
+            self.timer_estimated_range_to_cutoff_label.setText("Est. Range to Cutoff: N/A") # Clear text when hidden
 
     def reset_timer(self):
         """Resets the timer to its initial countdown value or to 00:00:00 if no initial value was set."""
@@ -1297,7 +1369,7 @@ class BatteryCalculatorGUI(QWidget):
             "}"
         )
         self.timer_direction_label.setText(" ")
-        self.timer_display_label.setStyleSheet("font-size: 24pt; font-weight: bold; color: #333;")
+        self.timer_display_label.setStyleSheet("font-size: 20pt; font-weight: bold; color: #333;")
 
         # Reset input fields to initial values or 0
         if self.initial_countdown_seconds > 0:
@@ -1319,8 +1391,12 @@ class BatteryCalculatorGUI(QWidget):
         # NEW: Clear and hide battery state labels on reset
         self.timer_estimated_percentage_label.setText("Est. %: N/A")
         self.timer_estimated_voltage_label.setText("Est. V: N/A")
+        self.timer_estimated_remaining_range_label.setText("Est. Range: N/A")
+        self.timer_estimated_range_to_cutoff_label.setText("Est. Range to Cutoff: N/A")
         self.timer_estimated_percentage_label.hide()
         self.timer_estimated_voltage_label.hide()
+        self.timer_estimated_remaining_range_label.hide()
+        self.timer_estimated_range_to_cutoff_label.hide()
         self.timer_initial_charge_percentage = None
         self.timer_total_charge_time_hours = None
         self.timer_battery_min_v = None
@@ -1877,6 +1953,7 @@ class BatteryCalculatorGUI(QWidget):
                 return
             
             total_energy_wh = capacity if capacity_type == "Wh" else capacity * nominal_voltage
+            self.total_energy_wh_calculated = total_energy_wh # Store for timer range estimation
 
             # Retrieve adjusted_wh_per_mile (from calculate_range, which updates self.efficiency_source_label)
             if not hasattr(self, 'full_charge_range') or self.full_charge_range <= 0:
@@ -1888,8 +1965,10 @@ class BatteryCalculatorGUI(QWidget):
             try:
                 miles_per_wh = float(self.miles_per_wh_label.text()) # Get the value already displayed
                 adjusted_wh_per_mile = 1 / miles_per_wh if miles_per_wh > 0 else 0
+                self.adjusted_wh_per_mile_calculated = adjusted_wh_per_mile # Store for timer range estimation
             except ValueError:
                 adjusted_wh_per_mile = 0
+                self.adjusted_wh_per_mile_calculated = 0 # Store 0 on error
 
             if adjusted_wh_per_mile <= 0:
                 self.range_to_cutoff_label.setText("N/A (Efficiency Error)")
@@ -2055,6 +2134,9 @@ class BatteryCalculatorGUI(QWidget):
         self.miles_per_ah_label.setText("")
         self.full_charge_range = 0 # Reset in case of error
         self.range_unit = "miles" # Reset to default unit
+        self.total_energy_wh_calculated = 0.0 # Reset stored value
+        self.adjusted_wh_per_mile_calculated = 0.0 # Reset stored value
+
 
         try:
             nominal_voltage_str = self.voltage_entry.text()
@@ -2078,6 +2160,7 @@ class BatteryCalculatorGUI(QWidget):
                 total_energy_wh = capacity
             else:  # capacity_type == "Ah"
                 total_energy_wh = capacity * nominal_voltage
+            self.total_energy_wh_calculated = total_energy_wh # Store it for timer range estimation
 
             # --- Determine adjusted_wh_per_mile based on source ---
             adjusted_wh_per_mile = 0.0
@@ -2103,6 +2186,7 @@ class BatteryCalculatorGUI(QWidget):
                 adjusted_wh_per_mile = (base_wh_per_mile_small * (1 - interpolation_factor) +
                                        base_wh_per_mile_large * interpolation_factor)
                 self.efficiency_source_label.setText("Predicted")
+            self.adjusted_wh_per_mile_calculated = adjusted_wh_per_mile # Store it for timer range estimation
 
 
             if adjusted_wh_per_mile <= 0:
@@ -2213,7 +2297,6 @@ class BatteryCalculatorGUI(QWidget):
                 self.charge_time_difference_label.setText("N/A")
                 return
 
-            # --- Base Charge Time to 100% (without throttle/conditioning) ---
             remaining_capacity_ah_to_full = capacity_ah * (100 - current_percentage) / 100
             base_estimated_charge_time_hours = remaining_capacity_ah_to_full / charge_rate if charge_rate > 0 else float('inf')
 
@@ -2372,6 +2455,18 @@ class BatteryCalculatorGUI(QWidget):
         self.countdown_minutes_entry.setText("0")
         self.countdown_seconds_entry.setText("0")
         self.reset_timer() # Use the dedicated reset method for the timer
+
+        # Also ensure the estimated battery state labels are cleared/hidden
+        self.timer_estimated_percentage_label.setText("Est. %: N/A")
+        self.timer_estimated_voltage_label.setText("Est. V: N/A")
+        self.timer_estimated_remaining_range_label.setText("Est. Range: N/A")
+        self.timer_estimated_range_to_cutoff_label.setText("Est. Range to Cutoff: N/A")
+        self.timer_estimated_percentage_label.hide() # Hide them
+        self.timer_estimated_voltage_label.hide() # Hide them
+        self.timer_estimated_remaining_range_label.hide() # Hide new labels
+        self.timer_estimated_range_to_cutoff_label.hide() # Hide new labels
+        # The checkbox will be set to checked by default in __init__ and load_profile_data handles initial state.
+        # No need to explicitly uncheck here if it's meant to be default checked.
 
 
     def export_breakdown_to_file(self):
