@@ -2,6 +2,8 @@
 1.07.14
 Updated 07/23/2025
 
+Now has real time battery stats with timer to know exactly how much range you have every second you have your battery on the charger.
+
 Now you can import data from exported json files from the app SuperCycle made by <a href="http://www.osborntech.com/"> Osborntech</a>
 <br><a href="https://play.google.com/store/apps/details?id=com.osborntech.supercycle&hl=en_US&pli=1">Google Play Store</a>
 <br><a href="https://apps.apple.com/us/app/supercycle-bike-computer/id1549463103">Apple App Store</a>
@@ -17,9 +19,6 @@ There is also a "Ride Log" which you can enter in your rides and it will make th
 
 a bunch more to come...
 
-"batteryutils.py" is the code
-
-"batteryutils_versionnumber" is the standalone binary
 
 <img align="center" width="500" src="https://github.com/Gobytego/BatteryUtils/blob/main/screenshot01.png">
 
