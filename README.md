@@ -1,5 +1,5 @@
 # BatteryUtils
-
+1.07.14
 Updated 07/23/2025
 
 Now you can import data from exported json files from the app SuperCycle made by <a href="http://www.osborntech.com/"> Osborntech</a>
