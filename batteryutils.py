@@ -56,7 +56,7 @@ class BatteryCalculatorGUI(QWidget):
     def __init__(self):
         super().__init__()
         # Changed window title to reflect "BatteryUtils" and version number
-        self.setWindowTitle("BatteryUtils v1.07.14") # Version bumped from 1.07.13 to 1.07.14
+        self.setWindowTitle("BatteryUtils v1.08.01") # Version bumped from 1.07.14 to 1.08.01
 
         self.setGeometry(100, 100, 950, 650) # x, y, width, height for the window, adjusted for three columns and smaller overall height
 
@@ -974,7 +974,7 @@ class BatteryCalculatorGUI(QWidget):
         app_name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         about_layout.addWidget(app_name_label)
 
-        version_label = QLabel(f"Version: {self.windowTitle().split(' ')[1]}") # Extract version from window title
+        version_label = QLabel(f"Version: 1.08.01") # Updated version number here
         version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         about_layout.addWidget(version_label)
 
@@ -1006,6 +1006,27 @@ class BatteryCalculatorGUI(QWidget):
         links_layout.addWidget(github_label)
 
         about_layout.addWidget(links_group_box)
+
+        # NEW: Recommended Group Box
+        recommended_group_box = QGroupBox("Recommended")
+        recommended_layout = QVBoxLayout(recommended_group_box)
+
+        ebikeling_label = QTextBrowser()
+        ebikeling_label.setOpenExternalLinks(True)
+        ebikeling_label.setReadOnly(True)
+        ebikeling_label.setHtml('<a href="https://ebikeling.com/">Ebikeling: Great place to buy E-Bike conversion kits.</a>')
+        ebikeling_label.setFixedHeight(30)
+        recommended_layout.addWidget(ebikeling_label)
+
+        booant_label = QTextBrowser()
+        booant_label.setOpenExternalLinks(True)
+        booant_label.setReadOnly(True)
+        booant_label.setHtml('<a href="https://booant.com/">Booant: Amazing well-built battery packs for Electric Vehicles.</a>')
+        booant_label.setFixedHeight(30)
+        recommended_layout.addWidget(booant_label)
+
+        about_layout.addWidget(recommended_group_box)
+
 
         # New section for SuperCycle
         supercycle_group_box = QGroupBox("Thanks to SuperCycle Creator")
