@@ -16,7 +16,7 @@ from PyQt6.QtGui import QIntValidator, QDesktopServices # Import QDesktopService
 SETTINGS_FILE = "BatteryUtils_Settings.json"
 
 class BatteryCalculatorGUI(QWidget):
-    # Universal cell voltage properties for typical Li-ion e-bike batteries
+    # Universal cell voltage properties for typical Li-ion batteries
     CELL_VOLTAGE_FULL = 4.2  # Volts per cell at 100% charge
     CELL_VOLTAGE_EMPTY = 3.0 # Volts per cell at 0% charge
     CELL_VOLTAGE_NOMINAL = 3.7 # Nominal Volts per cell (used for inferring S)
@@ -48,7 +48,7 @@ class BatteryCalculatorGUI(QWidget):
         "Agressive": 41.6   # Updated based on 1040Wh / 25 miles (kept from last change)
     }
 
-    MAX_PROFILES = 10 # Maximum number of profiles allowed (Increased from 3 to 10)
+    MAX_PROFILES = 20 # Maximum number of profiles allowed (Increased from 10 to 20)
 
     # Conversion factor for meters to miles
     METERS_TO_MILES = 0.000621371
@@ -56,7 +56,7 @@ class BatteryCalculatorGUI(QWidget):
     def __init__(self):
         super().__init__()
         # Changed window title to reflect "BatteryUtils" and version number
-        self.setWindowTitle("BatteryUtils v1.08.01") # Version bumped from 1.07.14 to 1.08.01
+        self.setWindowTitle("BatteryUtils v1.09.02") # Version bumped from v1.08.01 to 1.09.02
 
         self.setGeometry(100, 100, 950, 650) # x, y, width, height for the window, adjusted for three columns and smaller overall height
 
@@ -90,10 +90,10 @@ class BatteryCalculatorGUI(QWidget):
         self.calculated_range_unit_label = QLabel("miles") # Also explicitly initialize these
         self.remaining_range_unit_label = QLabel("miles")
         self.range_to_cutoff_unit_label = QLabel("miles")
-        # NEW: Initialize label for full range to cutoff
+        # Initialize label for full range to cutoff
         self.full_range_to_cutoff_label = QLabel("")
 
-        # NEW: Labels for charge time breakdown
+        # Labels for charge time breakdown
         self.base_charge_time_label = QLabel("")
         self.conditioned_charge_time_label = QLabel("")
         self.charge_time_difference_label = QLabel("")
@@ -123,7 +123,7 @@ class BatteryCalculatorGUI(QWidget):
         # Instance variable to hold the last ride data for persistence
         self.last_ride_data = {}
 
-        # NEW: Labels for Logged Rides Info group box on main tab (now in breakdown column)
+        # Labels for Logged Rides Info group box on main tab (now in breakdown column)
         self.logged_last_ride_wh_per_mile_label = QLabel("Last Ride Wh/mile: N/A")
         self.logged_last_ride_miles_per_wh_label = QLabel("Last Ride Miles/Wh: N/A")
         self.logged_average_wh_per_mile_label = QLabel("Average Wh/mile: N/A")
@@ -138,14 +138,14 @@ class BatteryCalculatorGUI(QWidget):
         self.timer_running = False
         self.initial_countdown_seconds = 0 # Store initial value for reset
         
-        # NEW: Variables for timer battery state estimation
+        # Variables for timer battery state estimation
         self.timer_initial_charge_percentage = None
         self.timer_total_charge_time_hours = None
         self.timer_battery_min_v = None
         self.timer_battery_max_v = None
         self.timer_start_datetime = None
 
-        # NEW: Variables to store calculated total energy and adjusted efficiency for timer range estimation
+        # Variables to store calculated total energy and adjusted efficiency for timer range estimation
         self.full_charge_range = 0.0 # Already exists, used for remaining range
         self.total_energy_wh_calculated = 0.0
         self.adjusted_wh_per_mile_calculated = 0.0
@@ -324,13 +324,13 @@ class BatteryCalculatorGUI(QWidget):
         self.voltage_radio.toggled.connect(self.toggle_charge_input)
 
 
-        # NEW: Preferred Low Battery Cutoff
+        # Preferred Low Battery Cutoff
         self.charging_layout.addWidget(QLabel("Preferred Cutoff (%):"), 4, 0)
         self.preferred_cutoff_entry = QLineEdit("25") # Default to 25%
         self.preferred_cutoff_entry.textChanged.connect(self.calculate_all) # Recalculate on cutoff change
         self.charging_layout.addWidget(self.preferred_cutoff_entry, 4, 1)
 
-        # NEW: Charge Throttle
+        # Charge Throttle
         self.charging_layout.addWidget(QLabel("Charge Throttle (%):"), 5, 0)
         self.charge_throttle_combo = QComboBox()
         self.charge_throttle_combo.addItems(["None", "5%", "10%", "15%", "20%"])
@@ -343,7 +343,7 @@ class BatteryCalculatorGUI(QWidget):
         self.throttled_rate_entry.textChanged.connect(self.calculate_all)
         self.charging_layout.addWidget(self.throttled_rate_entry, 6, 1)
 
-        # NEW: BMS Conditioning
+        # BMS Conditioning
         self.charging_layout.addWidget(QLabel("BMS Conditioning Time:"), 7, 0)
         self.bms_conditioning_combo = QComboBox()
         self.bms_conditioning_combo.addItems(["None", "15 min", "30 min", "1 hour"])
@@ -432,19 +432,19 @@ class BatteryCalculatorGUI(QWidget):
         self.range_layout.addWidget(self.range_to_cutoff_label, 2, 1)
         self.range_layout.addWidget(self.range_to_cutoff_unit_label, 2, 2)
 
-        # NEW: Estimated Full Range to Cutoff %
+        # Estimated Full Range to Cutoff %
         self.range_layout.addWidget(QLabel("Full Range to Cutoff %:"), 3, 0)
         self.range_layout.addWidget(self.full_range_to_cutoff_label, 3, 1)
         self.range_layout.addWidget(self.calculated_range_unit_label, 3, 2) # Use same unit label
 
-        # NEW: Miles/Wh and Miles/Ah moved here (from old "Other" box)
+        # Miles/Wh and Miles/Ah moved here (from old "Other" box)
         self.range_layout.addWidget(QLabel("Miles/Wh:"), 4, 0)
         self.range_layout.addWidget(self.miles_per_wh_label, 4, 1)
 
         self.range_layout.addWidget(QLabel("Miles/Ah:"), 5, 0)
         self.range_layout.addWidget(self.miles_per_ah_label, 5, 1)
 
-        # NEW: Reset Efficiency Button (reinstated)
+        # Reset Efficiency Button (reinstated)
         self.reset_efficiency_button = QPushButton("Reset Efficiency")
         self.reset_efficiency_button.clicked.connect(lambda: self.reset_efficiency_source(show_message=True))
         self.reset_efficiency_button.setStyleSheet(
@@ -508,7 +508,7 @@ class BatteryCalculatorGUI(QWidget):
         self.charge_layout.addWidget(self.percentage_after_charge_label, 5, 1)
         self.charge_layout.addWidget(QLabel("%"), 5, 2)
 
-        # --- NEW: Charge Timer Group Box (moved to results column, under --Charge--) ---
+        # --- Charge Timer Group Box (moved to results column, under --Charge--) ---
         self.charge_timer_group_box = QGroupBox("Charge Timer")
         self.charge_timer_layout = QVBoxLayout(self.charge_timer_group_box) # Changed to QVBoxLayout for overall structure
 
@@ -616,7 +616,7 @@ class BatteryCalculatorGUI(QWidget):
 
         self.charge_timer_layout.addLayout(est_battery_state_h_layout) # Add the new horizontal layout
 
-        # NEW: Estimated range labels (vertical layout for stacking)
+        # Estimated range labels (vertical layout for stacking)
         est_range_v_layout = QVBoxLayout()
         self.timer_estimated_remaining_range_label = QLabel("Est. Range: N/A")
         self.timer_estimated_remaining_range_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -641,7 +641,7 @@ class BatteryCalculatorGUI(QWidget):
         # Add the new Charge Timer group box to the results_display_layout
         self.results_display_layout.addWidget(self.charge_timer_group_box)
 
-        # --- NEW: Logged Rides Info Group Box (moved to breakdown column) ---
+        # --- Logged Rides Info Group Box (moved to breakdown column) ---
         self.logged_rides_info_group_box = QGroupBox("--- Logged Rides Info ---")
         self.logged_rides_info_layout = QVBoxLayout(self.logged_rides_info_group_box)
 
@@ -702,7 +702,7 @@ class BatteryCalculatorGUI(QWidget):
         self.logged_rides_info_layout.addLayout(efficiency_buttons_layout)
         self.breakdown_display_layout.addWidget(self.logged_rides_info_group_box) # Added to breakdown column
 
-        # --- NEW: Vehicle Breakdown Group Box (added to breakdown column) ---
+        # --- Vehicle Breakdown Group Box (added to breakdown column) ---
         self.vehicle_breakdown_group_box = QGroupBox("--- Vehicle Breakdown ---")
         self.vehicle_breakdown_layout = QGridLayout(self.vehicle_breakdown_group_box)
         self.breakdown_display_layout.addWidget(self.vehicle_breakdown_group_box) # Add to breakdown column
@@ -812,7 +812,7 @@ class BatteryCalculatorGUI(QWidget):
         self.ride_end_value_entry.setPlaceholderText("e.g., 40 or 44.0")
         input_layout.addWidget(self.ride_end_value_entry, 5, 1)
         
-        # NEW: Riding Style for Logged Ride
+        # Riding Style for Logged Ride
         input_layout.addWidget(QLabel("Riding Style:"), 6, 0)
         self.ride_driving_style_combo = QComboBox()
         self.ride_driving_style_combo.addItems(["Agressive", "Casual", "Eco"])
@@ -881,7 +881,7 @@ class BatteryCalculatorGUI(QWidget):
             "}"
         )
         
-        # NEW: Export and Import Ride Log Buttons
+        # Export and Import Ride Log Buttons
         self.export_ride_log_button = QPushButton("Export Ride Log")
         self.export_ride_log_button.clicked.connect(self.export_ride_log_to_file)
         self.export_ride_log_button.setStyleSheet(
@@ -974,7 +974,7 @@ class BatteryCalculatorGUI(QWidget):
         app_name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         about_layout.addWidget(app_name_label)
 
-        version_label = QLabel(f"Version: 1.08.01") # Updated version number here
+        version_label = QLabel(f"Version: 1.09.02") # Updated version number here
         version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         about_layout.addWidget(version_label)
 
@@ -982,12 +982,12 @@ class BatteryCalculatorGUI(QWidget):
         author_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         about_layout.addWidget(author_label)
 
-        description_label = QLabel("A comprehensive tool for e-bike battery management, ride logging, and quick calculations.")
+        description_label = QLabel("A comprehensive tool for PEV (Personal Electric Vehicles) battery management, ride logging, and quick calculations.")
         description_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         description_label.setWordWrap(True)
         about_layout.addWidget(description_label)
 
-        # New section for links
+        # links
         links_group_box = QGroupBox("Links")
         links_layout = QVBoxLayout(links_group_box)
 
@@ -1007,10 +1007,24 @@ class BatteryCalculatorGUI(QWidget):
 
         about_layout.addWidget(links_group_box)
 
-        # NEW: Recommended Group Box
+        # Recommended Group Box
         recommended_group_box = QGroupBox("Recommended")
         recommended_layout = QVBoxLayout(recommended_group_box)
+        
+        roadrunner_label = QTextBrowser()
+        roadrunner_label.setOpenExternalLinks(True)
+        roadrunner_label.setReadOnly(True)
+        roadrunner_label.setHtml('<a href="https://roadrunnerscooters.com/">Roadrunner Scooters: Best Scooters on the market.</a>')
+        roadrunner_label.setFixedHeight(30)
+        recommended_layout.addWidget(roadrunner_label)
 
+        pidzoom_label = QTextBrowser()
+        pidzoom_label.setOpenExternalLinks(True)
+        pidzoom_label.setReadOnly(True)
+        pidzoom_label.setHtml('<a href="https://https://pidzoom.com//">Pidzoom: Amazing Chargers for all PEVs.</a>')
+        pidzoom_label.setFixedHeight(30)
+        recommended_layout.addWidget(pidzoom_label)
+        
         ebikeling_label = QTextBrowser()
         ebikeling_label.setOpenExternalLinks(True)
         ebikeling_label.setReadOnly(True)
@@ -1028,7 +1042,7 @@ class BatteryCalculatorGUI(QWidget):
         about_layout.addWidget(recommended_group_box)
 
 
-        # New section for SuperCycle
+        # SuperCycle
         supercycle_group_box = QGroupBox("Thanks to SuperCycle Creator")
         supercycle_layout = QVBoxLayout(supercycle_group_box) # FIX: Changed supercycle_box to supercycle_group_box
 
@@ -1080,7 +1094,7 @@ class BatteryCalculatorGUI(QWidget):
         supercycle_layout.addLayout(app_buttons_layout)
         about_layout.addWidget(supercycle_group_box)
 
-        copyright_label = QLabel("© 2024-2025 Gobytego. All rights reserved.")
+        copyright_label = QLabel("© 2024-2026 Gobytego. All rights reserved.")
         copyright_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         about_layout.addWidget(copyright_label)
 
@@ -1169,7 +1183,7 @@ class BatteryCalculatorGUI(QWidget):
                 )
                 self.update_timer_display() # Initial display update
 
-                # NEW: Capture battery state for estimation if checkbox is checked
+                # Capture battery state for estimation if checkbox is checked
                 if self.show_battery_state_checkbox.isChecked():
                     self.timer_initial_charge_percentage, _ = self.get_current_battery_percentage()
                     
@@ -1239,7 +1253,7 @@ class BatteryCalculatorGUI(QWidget):
 
         self.update_timer_display()
         
-        # NEW: Update estimated battery state if enabled and valid
+        # Update estimated battery state if enabled and valid
         if self.show_battery_state_checkbox.isChecked() and self.timer_running:
             self.update_timer_battery_state()
 
@@ -1409,7 +1423,7 @@ class BatteryCalculatorGUI(QWidget):
         
         self.update_timer_display() # Update display to show reset value
 
-        # NEW: Clear and hide battery state labels on reset
+        # Clear and hide battery state labels on reset
         self.timer_estimated_percentage_label.setText("Est. %: N/A")
         self.timer_estimated_voltage_label.setText("Est. V: N/A")
         self.timer_estimated_remaining_range_label.setText("Est. Range: N/A")
@@ -1475,9 +1489,9 @@ class BatteryCalculatorGUI(QWidget):
             "wheel_diameter": "",
             "driving_style": "Casual",
             "preferred_cutoff_percentage": "25",
-            "charge_throttle_percent": "None", # NEW: Default for charge throttle
-            "throttled_rate": "",              # NEW: Default for throttled rate
-            "bms_conditioning_time": "None",   # NEW: Default for BMS conditioning
+            "charge_throttle_percent": "None", # Default for charge throttle
+            "throttled_rate": "",              # Default for throttled rate
+            "bms_conditioning_time": "None",   # Default for BMS conditioning
             "ride_log": [],
             "last_ride_data": {}
         }
@@ -1522,7 +1536,7 @@ class BatteryCalculatorGUI(QWidget):
         self.wheel_diameter_entry.setText(settings.get("wheel_diameter", ""))
         self.driving_style_combo.setCurrentText(settings.get("driving_style", "Casual"))
 
-        # NEW: Load charge throttle and BMS conditioning settings
+        # Load charge throttle and BMS conditioning settings
         self.charge_throttle_combo.setCurrentText(settings.get("charge_throttle_percent", "None"))
         self.throttled_rate_entry.setText(settings.get("throttled_rate", ""))
         self.bms_conditioning_combo.setCurrentText(settings.get("bms_conditioning_time", "None"))
@@ -1539,7 +1553,7 @@ class BatteryCalculatorGUI(QWidget):
         self.update_ride_log_table()
         self.calculate_average_efficiency() # This will also update the new labels on the main tab
 
-        # NEW: Load and display last ride data
+        # Load and display last ride data
         self.last_ride_data = settings.get("last_ride_data", {})
         self.update_last_ride_display() # This will also update the new labels on the main tab
 
@@ -1571,11 +1585,11 @@ class BatteryCalculatorGUI(QWidget):
             "wheel_diameter": self.wheel_diameter_entry.text(),
             "driving_style": self.driving_style_combo.currentText(),
             "preferred_cutoff_percentage": self.preferred_cutoff_entry.text(),
-            "charge_throttle_percent": self.charge_throttle_combo.currentText(), # NEW: Save charge throttle
-            "throttled_rate": self.throttled_rate_entry.text(),              # NEW: Save throttled rate
-            "bms_conditioning_time": self.bms_conditioning_combo.currentText(),   # NEW: Save BMS conditioning
+            "charge_throttle_percent": self.charge_throttle_combo.currentText(), # Save charge throttle
+            "throttled_rate": self.throttled_rate_entry.text(),              # Save throttled rate
+            "bms_conditioning_time": self.bms_conditioning_combo.currentText(),   # Save BMS conditioning
             "ride_log": self.all_profiles.get(profile_name, {}).get("ride_log", []), # Preserve existing log
-            "last_ride_data": self.last_ride_data, # NEW: Save last ride data
+            "last_ride_data": self.last_ride_data, # Save last ride data
         }
         self.all_profiles[profile_name] = current_settings
         self._save_all_profiles_to_file(profile_name)
@@ -1749,7 +1763,7 @@ class BatteryCalculatorGUI(QWidget):
         # Calculate time to full charge and remaining range/percentage based on current state
         self.calculate_charge_time_and_remaining_range()
         
-        # NEW: Calculate range to cutoff and charge time from cutoff, and FULL range to cutoff
+        # Calculate range to cutoff and charge time from cutoff, and FULL range to cutoff
         self.calculate_cutoff_metrics()
 
         # Get inputs for optional percentage after charge calculation
@@ -2006,7 +2020,7 @@ class BatteryCalculatorGUI(QWidget):
                 range_to_cutoff = wh_available_to_cutoff / adjusted_wh_per_mile
                 self.range_to_cutoff_label.setText(f"{range_to_cutoff:.2f}")
 
-            # NEW: Calculate Estimated Full Range to Cutoff %
+            # Calculate Estimated Full Range to Cutoff %
             usable_percentage = 100 - preferred_cutoff_percentage
             if usable_percentage <= 0: # If cutoff is 100% or more, usable range is 0
                 self.full_range_to_cutoff_label.setText("0.00")
@@ -2413,7 +2427,7 @@ class BatteryCalculatorGUI(QWidget):
         self.driving_style_combo.setCurrentText("Casual")
         self.percent_radio.setChecked(True) # Set percentage radio button
 
-        # NEW: Clear new charging fields
+        # Clear new charging fields
         self.charge_throttle_combo.setCurrentText("None")
         self.throttled_rate_entry.clear()
         self.bms_conditioning_combo.setCurrentText("None")
@@ -2440,7 +2454,7 @@ class BatteryCalculatorGUI(QWidget):
         self.results_charge_duration_label.setText("")
         # Reset the dynamic label as well
         self.range_to_cutoff_title_label.setText("Range to cutoff of:")
-        # NEW: Clear the new full range to cutoff label
+        # Clear the new full range to cutoff label
         self.full_range_to_cutoff_label.setText("")
 
 
@@ -2454,7 +2468,7 @@ class BatteryCalculatorGUI(QWidget):
         self.breakdown_charge_rate_label.setText("")
         self.breakdown_preferred_cutoff_label.setText("") # Clear breakdown cutoff
         self.breakdown_preferred_cutoff_voltage_label.setText("") # Clear breakdown cutoff voltage
-        # NEW: Clear new charging breakdown fields
+        # Clear new charging breakdown fields
         self.breakdown_charge_throttle_label.setText("")
         self.breakdown_throttled_rate_label.setText("")
         self.breakdown_bms_conditioning_label.setText("")
@@ -2467,7 +2481,7 @@ class BatteryCalculatorGUI(QWidget):
         self.update_ride_log_table() # This will clear it if no data is loaded
         self.calculate_average_efficiency() # This will reset the average label
 
-        # NEW: Clear last ride display (and the new main tab labels)
+        # Clear last ride display (and the new main tab labels)
         self.last_ride_data = {} # Clear the stored data
         self.update_last_ride_display()
 
@@ -2514,7 +2528,7 @@ class BatteryCalculatorGUI(QWidget):
         breakdown_text += f"Remaining Range: {self.remaining_range_label.text()} {self.remaining_range_unit_label.text()}\n"
         # Use the dynamic label's text for export
         breakdown_text += f"{self.range_to_cutoff_title_label.text().replace(':', '')}: {self.range_to_cutoff_label.text()} {self.range_to_cutoff_unit_label.text()}\n"
-        # NEW: Add full range to cutoff to export
+        # Add full range to cutoff to export
         breakdown_text += f"Full Range to Cutoff %: {self.full_range_to_cutoff_label.text()} {self.calculated_range_unit_label.text()}\n"
 
         breakdown_text += f"Current %: {self.current_state_percent_result_label.text()}%\n" # Added % directly here
@@ -2529,7 +2543,7 @@ class BatteryCalculatorGUI(QWidget):
         breakdown_text += f"Miles/Ah: {self.miles_per_ah_label.text()}\n"
         breakdown_text += f"Efficiency Source: {self.efficiency_source_label.text()}\n"
 
-        # NEW: Add logged rides info from the new main tab group box (now in breakdown)
+        # Add logged rides info from the new main tab group box (now in breakdown)
         breakdown_text += "\n--- Logged Rides Info ---\n"
         breakdown_text += f"{self.logged_last_ride_wh_per_mile_label.text()}\n"
         breakdown_text += f"{self.logged_last_ride_miles_per_wh_label.text()}\n"
@@ -2641,7 +2655,7 @@ class BatteryCalculatorGUI(QWidget):
                 "end_percent": round(end_percent, 2),
                 "wh_consumed": round(wh_consumed, 2),
                 "wh_per_mile": round(wh_per_mile, 2), # Store for easy display/calculation
-                "riding_style": logged_driving_style, # NEW: Store riding style
+                "riding_style": logged_driving_style, # Store riding style
                 "notes": notes
             }
             
@@ -2696,7 +2710,7 @@ class BatteryCalculatorGUI(QWidget):
             self.ride_log_table.setItem(row_idx, 3, QTableWidgetItem(f"{ride.get('end_percent', 'N/A')}" if ride.get('end_percent') != 'N/A' else 'N/A')) # Handle N/A
             self.ride_log_table.setItem(row_idx, 4, QTableWidgetItem(f"{ride.get('wh_consumed', 'N/A')}" if ride.get('wh_consumed') != 'N/A' else 'N/A')) # Handle N/A
             self.ride_log_table.setItem(row_idx, 5, QTableWidgetItem(f"{ride.get('wh_per_mile', 'N/A')}" if ride.get('wh_per_mile') != 'N/A' else 'N/A')) # Handle N/A
-            self.ride_log_table.setItem(row_idx, 6, QTableWidgetItem(ride.get("riding_style", "N/A"))) # NEW: Set Riding Style
+            self.ride_log_table.setItem(row_idx, 6, QTableWidgetItem(ride.get("riding_style", "N/A"))) # Set Riding Style
             self.ride_log_table.setItem(row_idx, 7, QTableWidgetItem(ride.get("notes", ""))) # Shifted to column 7
 
         # Adjust column widths to content
