@@ -12,7 +12,7 @@ Updated 02/07/2026
 Key Features:
 -------------
 
-### 1\. Multi-Profile Management:
+### 1\. Multi-Profile Management: 
 
 *   **Create, Save, Load, and Delete Profiles:** Easily set up and switch between different e-bike or battery configurations. Perfect for users with multiple bikes, different battery packs, or who want to track changes over time.
 *   **Persistent Settings:** All your profile data, including logged rides, is automatically saved and loaded, so you never lose your information.
