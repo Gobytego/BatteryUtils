@@ -5,7 +5,7 @@ Updated 02/07/2026
 <br>BatteryUtils is a desktop application designed to help e-bike/e-scooter enthusiasts manage their battery health, predict range, and log their rides efficiently. It combines essential calculations with ride tracking, all within a user-friendly interface.</br>
 
 * * *
-<img align="center" width="900" src="https://github.com/Gobytego/BatteryUtils/blob/main/screenshot00.png">
+<img align="center" width="900" src="https://github.com/Gobytego/BatteryUtils/blob/main/screenshot01.png">
 
 <img align="center" width="900" src="https://github.com/Gobytego/BatteryUtils/blob/main/screenshot002.png">
 
