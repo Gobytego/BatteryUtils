@@ -1,7 +1,7 @@
 BatteryUtils: Your Comprehensive E-Bike/E-Scooter Battery & Ride Management Tool
 =================================================================================
-1.09.02 
-Updated 02/07/2026
+1.10.04 
+Updated 04/18/2026
 <br>BatteryUtils is a desktop application designed to help e-bike/e-scooter enthusiasts manage their battery health, predict range, and log their rides efficiently. It combines essential calculations with ride tracking, all within a user-friendly interface.</br>
 
 * * *
