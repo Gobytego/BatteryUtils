@@ -7,7 +7,11 @@ Updated 04/18/2026
 * * *
 <img align="center" width="900" src="https://github.com/Gobytego/BatteryUtils/blob/main/screenshot01.png">
 
-<img align="center" width="900" src="https://github.com/Gobytego/BatteryUtils/blob/main/screenshot002.png">
+<img align="center" width="900" src="https://github.com/Gobytego/BatteryUtils/blob/main/screenshot02.png">
+
+<img align="center" width="900" src="https://github.com/Gobytego/BatteryUtils/blob/main/screenshot03.png">
+
+<img align="center" width="900" src="https://github.com/Gobytego/BatteryUtils/blob/main/screenshot04.png">
 
 Key Features:
 -------------
