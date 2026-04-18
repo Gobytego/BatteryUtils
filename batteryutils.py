@@ -56,7 +56,7 @@ class BatteryCalculatorGUI(QWidget):
     def __init__(self):
         super().__init__()
         # Changed window title to reflect "BatteryUtils" and version number
-        self.setWindowTitle("BatteryUtils v1.09.02") # Version bumped from v1.08.01 to 1.09.02
+        self.setWindowTitle("BatteryUtils v1.10.04") # Version bumped from v1.09.02 to 1.10.04
 
         self.setGeometry(100, 100, 950, 650) # x, y, width, height for the window, adjusted for three columns and smaller overall height
 
@@ -114,6 +114,7 @@ class BatteryCalculatorGUI(QWidget):
         self.breakdown_charge_throttle_label = QLabel("")
         self.breakdown_throttled_rate_label = QLabel("")
         self.breakdown_bms_conditioning_label = QLabel("")
+        self.breakdown_odometer_label = QLabel("0.0 miles") # Initialize breakdown odometer
 
         self.efficiency_source_label = QLabel("Predicted") # Also initialized here as it's modified early
 
@@ -370,6 +371,13 @@ class BatteryCalculatorGUI(QWidget):
         self.driving_style_combo = QComboBox()
         self.driving_style_combo.addItems(["Agressive", "Casual", "Eco"])
         self.driving_style_combo.currentTextChanged.connect(self.calculate_all) # Recalculate if driving style changes
+        
+        # Odometer Input defined before default text is set
+        self.motor_bike_layout.addWidget(QLabel("Odometer (miles):"), 3, 0)
+        self.odometer_entry = QLineEdit("0.0")
+        self.odometer_entry.textChanged.connect(self.calculate_all) # Updates breakdown when manually edited
+        self.motor_bike_layout.addWidget(self.odometer_entry, 3, 1)
+
         self.driving_style_combo.setCurrentText("Casual") # Default for new profiles
         self.motor_bike_layout.addWidget(self.driving_style_combo, 2, 1)
 
@@ -736,6 +744,8 @@ class BatteryCalculatorGUI(QWidget):
         self.vehicle_breakdown_layout.addWidget(self.breakdown_bms_conditioning_label, 12, 1)
         self.vehicle_breakdown_layout.addWidget(QLabel("Efficiency Source:"), 13, 0)
         self.vehicle_breakdown_layout.addWidget(self.efficiency_source_label, 13, 1)
+        self.vehicle_breakdown_layout.addWidget(QLabel("Odometer:"), 14, 0)
+        self.vehicle_breakdown_layout.addWidget(self.breakdown_odometer_label, 14, 1)
 
 
         # --- Attribution (at the bottom of the Results Column) ---
@@ -974,7 +984,7 @@ class BatteryCalculatorGUI(QWidget):
         app_name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         about_layout.addWidget(app_name_label)
 
-        version_label = QLabel(f"Version: 1.09.02") # Updated version number here
+        version_label = QLabel(f"Version: 1.10.04") # Updated version number here
         version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         about_layout.addWidget(version_label)
 
@@ -1492,6 +1502,7 @@ class BatteryCalculatorGUI(QWidget):
             "charge_throttle_percent": "None", # Default for charge throttle
             "throttled_rate": "",              # Default for throttled rate
             "bms_conditioning_time": "None",   # Default for BMS conditioning
+            "odometer": "0.0",                 # Odometer default
             "ride_log": [],
             "last_ride_data": {}
         }
@@ -1535,6 +1546,7 @@ class BatteryCalculatorGUI(QWidget):
         self.motor_wattage_entry.setText(settings.get("motor_wattage", ""))
         self.wheel_diameter_entry.setText(settings.get("wheel_diameter", ""))
         self.driving_style_combo.setCurrentText(settings.get("driving_style", "Casual"))
+        self.odometer_entry.setText(settings.get("odometer", "0.0")) # Load Odometer
 
         # Load charge throttle and BMS conditioning settings
         self.charge_throttle_combo.setCurrentText(settings.get("charge_throttle_percent", "None"))
@@ -1588,6 +1600,7 @@ class BatteryCalculatorGUI(QWidget):
             "charge_throttle_percent": self.charge_throttle_combo.currentText(), # Save charge throttle
             "throttled_rate": self.throttled_rate_entry.text(),              # Save throttled rate
             "bms_conditioning_time": self.bms_conditioning_combo.currentText(),   # Save BMS conditioning
+            "odometer": self.odometer_entry.text(),                          # Save Odometer
             "ride_log": self.all_profiles.get(profile_name, {}).get("ride_log", []), # Preserve existing log
             "last_ride_data": self.last_ride_data, # Save last ride data
         }
@@ -1789,7 +1802,7 @@ class BatteryCalculatorGUI(QWidget):
 
     def get_derived_voltage_range_and_s(self):
         """Calculates min and max voltage and the series cell count based on user input (inferred or manual).
-           Does NOT show messageboxes directly; returns None for invalid inputs."""
+            Does NOT show messageboxes directly; returns None for invalid inputs."""
         series_cells = None
         nominal_voltage_str = self.voltage_entry.text()
 
@@ -2089,7 +2102,7 @@ class BatteryCalculatorGUI(QWidget):
         charge_throttle_percent = self.charge_throttle_combo.currentText() # NEW
         throttled_rate = self.throttled_rate_entry.text()               # NEW
         bms_conditioning_time = self.bms_conditioning_combo.currentText() # NEW
-
+        odometer_val = self.odometer_entry.text() # ADD THIS
 
         # Update labels with raw input values
         self.breakdown_voltage_label.setText(nominal_voltage)
@@ -2100,7 +2113,7 @@ class BatteryCalculatorGUI(QWidget):
         self.breakdown_charge_throttle_label.setText(charge_throttle_percent) # NEW
         self.breakdown_throttled_rate_label.setText(f"{throttled_rate}A" if throttled_rate else "N/A") # NEW
         self.breakdown_bms_conditioning_label.setText(bms_conditioning_time) # NEW
-
+        self.breakdown_odometer_label.setText(f"{odometer_val} miles" if odometer_val else "0.0 miles") # ADD THIS
 
         # Calculate and update derived values for breakdown
         min_v, max_v, series_cells = self.get_derived_voltage_range_and_s()
@@ -2409,7 +2422,7 @@ class BatteryCalculatorGUI(QWidget):
 
     def clear_fields(self, keep_profile_name=False):
         """Clears all input fields, and output labels.
-           If keep_profile_name is True, the profile selection is not reset."""
+            If keep_profile_name is True, the profile selection is not reset."""
         # Clear input entries
         self.voltage_entry.clear()
         self.series_cells_entry.clear()
@@ -2421,6 +2434,7 @@ class BatteryCalculatorGUI(QWidget):
         self.motor_wattage_entry.clear()
         self.wheel_diameter_entry.clear()
         self.preferred_cutoff_entry.setText("25") # Reset cutoff to default
+        self.odometer_entry.setText("0.0") # Reset odometer to 0.0
         
         # Reset comboboxes and radiobuttons to default values
         self.capacity_type_combo.setCurrentText("Wh")
@@ -2472,6 +2486,7 @@ class BatteryCalculatorGUI(QWidget):
         self.breakdown_charge_throttle_label.setText("")
         self.breakdown_throttled_rate_label.setText("")
         self.breakdown_bms_conditioning_label.setText("")
+        self.breakdown_odometer_label.setText("0.0 miles") # Clear breakdown odometer
 
         self.efficiency_source_label.setText("Predicted") # Reset efficiency source
         self.reset_efficiency_source(show_message=False) # Reset the internal flag too, without a message
@@ -2520,6 +2535,7 @@ class BatteryCalculatorGUI(QWidget):
         breakdown_text += f"Charge Throttle %: {self.breakdown_charge_throttle_label.text()}\n" # NEW
         breakdown_text += f"Throttled Rate: {self.breakdown_throttled_rate_label.text()}\n"   # NEW
         breakdown_text += f"BMS Conditioning: {self.breakdown_bms_conditioning_label.text()}\n" # NEW
+        breakdown_text += f"Odometer: {self.breakdown_odometer_label.text()}\n" # NEW
         breakdown_text += f"Efficiency Source: {self.efficiency_source_label.text()}\n" # Include efficiency source
 
         # Add results section values to the export for completeness, especially moved ones
@@ -2664,6 +2680,16 @@ class BatteryCalculatorGUI(QWidget):
                 self.all_profiles[self.current_profile_name]["ride_log"] = []
             
             self.all_profiles[self.current_profile_name]["ride_log"].append(ride_data)
+
+            # --- ADD THIS BLOCK: Auto-increment Odometer ---
+            try:
+                current_odo = float(self.odometer_entry.text() or 0.0)
+                new_odo = current_odo + distance_miles
+                self.odometer_entry.setText(f"{new_odo:.2f}")
+            except ValueError:
+                # Fallback if the field contained non-numeric text
+                self.odometer_entry.setText(f"{distance_miles:.2f}")
+            # -----------------------------------------------
             
             # CRITICAL FIX: Update last_ride_data within the profile's dictionary explicitly
             self.all_profiles[self.current_profile_name]["last_ride_data"] = ride_data
