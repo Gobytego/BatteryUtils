@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QTextBrowser, QCheckBox # Import QTextBrowser for clickable links, QCheckBox for new feature
 )
 from PyQt6.QtCore import Qt, QTimer, QDateTime, QUrl # Import QUrl for opening links
-from PyQt6.QtGui import QIntValidator, QDesktopServices # Import QDesktopServices for opening links
+from PyQt6.QtGui import QIntValidator, QDesktopServices, QColor, QBrush, QFont # Added QColor, QBrush, QFont for chart
 
 # Changed settings file name
 SETTINGS_FILE = "BatteryUtils_Settings.json"
@@ -28,7 +28,7 @@ class BatteryCalculatorGUI(QWidget):
         52: 14, # 14S * 3.7V_nominal = 51.8V
         60: 16, # 16S * 3.7V_nominal = 59.2V
         72: 20, # 20S * 3.7V_nominal = 74.0V
-        # Add more mappings as needed
+        96: 26  # 26S * 3.7V_nominal = 96.2V
     }
 
     # Reference Wheel Sizes for Wh/mile interpolation
@@ -56,7 +56,7 @@ class BatteryCalculatorGUI(QWidget):
     def __init__(self):
         super().__init__()
         # Changed window title to reflect "BatteryUtils" and version number
-        self.setWindowTitle("BatteryUtils v1.10.04") # Version bumped from v1.09.02 to 1.10.04
+        self.setWindowTitle("BatteryUtils v1.10.04") # Version bumped to 1.10.04
 
         self.setGeometry(100, 100, 950, 650) # x, y, width, height for the window, adjusted for three columns and smaller overall height
 
@@ -216,7 +216,13 @@ class BatteryCalculatorGUI(QWidget):
         self.init_ride_log_ui() # Call method to build ride log UI
         self.tab_widget.addTab(self.ride_log_tab, "Ride Log")
 
-        # --- Tab 3: About (Existing content) ---
+        # --- Tab 3: Voltage Chart (New) ---
+        self.chart_tab = QWidget()
+        self.chart_main_layout = QVBoxLayout(self.chart_tab)
+        self.init_chart_ui()
+        self.tab_widget.addTab(self.chart_tab, "Voltage Chart")
+
+        # --- Tab 4: About (Existing content) ---
         self.about_tab = QWidget()
         self.about_main_layout = QVBoxLayout(self.about_tab)
         self.init_about_ui() # Call method to build about UI
@@ -973,6 +979,74 @@ class BatteryCalculatorGUI(QWidget):
         self.ride_log_main_layout.addWidget(delete_ride_button)
         self.ride_log_main_layout.addLayout(ride_log_export_import_layout) # Add the new layout for export/import
         self.ride_log_main_layout.addWidget(average_efficiency_group_box) # Still keep this group box for displaying averages
+
+    def init_chart_ui(self):
+        """Initializes the UI elements for the Voltage Chart tab."""
+        chart_group_box = QGroupBox("Battery Voltage Levels (Generated from Calculator Limits)")
+        layout = QVBoxLayout(chart_group_box)
+
+        self.voltage_table = QTableWidget()
+        
+        # The voltages we want columns for
+        voltages = [36, 48, 52, 60, 72, 96]
+        # Percentages from 100 down to 0 in steps of 10
+        percentages = list(range(100, -1, -10))
+        
+        self.voltage_table.setColumnCount(len(voltages) + 1)
+        self.voltage_table.setRowCount(len(percentages))
+        
+        # Set Headers
+        headers = ["Level %"] + [f"{v}V" for v in voltages]
+        self.voltage_table.setHorizontalHeaderLabels(headers)
+        
+        font = QFont()
+        font.setBold(True)
+        
+        # Populate rows
+        for row_idx, pct in enumerate(percentages):
+            # 1. Level Column Item
+            item_pct = QTableWidgetItem(f"{pct}%")
+            item_pct.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item_pct.setFont(font)
+            
+            # Determine row color matching the provided image style
+            if pct >= 70:
+                bg_color = QColor(197, 224, 180) # Light Green
+            elif pct >= 40:
+                bg_color = QColor(255, 255, 0)   # Yellow
+            else:
+                bg_color = QColor(255, 0, 0)     # Red
+                
+            item_pct.setBackground(QBrush(bg_color))
+            self.voltage_table.setItem(row_idx, 0, item_pct)
+            
+            # 2. Voltage Columns
+            for col_idx, volt in enumerate(voltages):
+                # We use the internal app logic to calculate the exact voltage
+                series = self.NOMINAL_VOLTAGE_TO_SERIES_CELLS.get(volt)
+                if series:
+                    min_v = series * self.CELL_VOLTAGE_EMPTY
+                    max_v = series * self.CELL_VOLTAGE_FULL
+                    # Linear interpolation (same as what happens behind the scenes in the calculator)
+                    val = min_v + (pct / 100.0) * (max_v - min_v)
+                    display_val = f"{val:.1f}"
+                else:
+                    display_val = "N/A"
+                
+                item_val = QTableWidgetItem(display_val)
+                item_val.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                item_val.setFont(font)
+                item_val.setBackground(QBrush(bg_color))
+                
+                self.voltage_table.setItem(row_idx, col_idx + 1, item_val)
+                
+        # Layout formatting
+        self.voltage_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.voltage_table.verticalHeader().setVisible(False)
+        self.voltage_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers) # Make table Read-Only
+        
+        layout.addWidget(self.voltage_table)
+        self.chart_main_layout.addWidget(chart_group_box)
 
 
     def init_about_ui(self):
